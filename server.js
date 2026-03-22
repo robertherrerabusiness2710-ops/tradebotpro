@@ -24,11 +24,14 @@ if (process.env.FIREBASE_SERVICE_ACCOUNT) {
 }
 
 const app = express();
-app.use(cors());
+app.use(cors({ origin: "*" })); // Muy permisivo para no fallar en el despliegue
 
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
-  cors: { origin: "*" }
+  cors: { 
+    origin: "*", // Permitir que la App de Firebase se comunique
+    methods: ["GET", "POST"]
+  }
 });
 
 // Almacén dinámico de conexiones por usuario (UID)
