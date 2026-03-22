@@ -1,0 +1,10 @@
+node_modules
+npm-debug.log
+dist
+.env
+.git
+.vscode
+*.md
+Dockerfile
+firebase.json
+.firebaserc
