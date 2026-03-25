@@ -70,11 +70,38 @@ const App = () => {
     }
   };
 
+  // CARGAR CONFIGURACIÓN DESDE LA NUBE
+  const loadUserConfig = async (currentUser) => {
+    if (!currentUser || !socketRef.current) return;
+    try {
+        const docRef = doc(db, "users", currentUser.uid);
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+            const config = docSnap.data();
+            if (config.iqEmail && config.iqPassword) {
+                addLog("⏳ Sincronizando con el Broker desde la nube...");
+                setIsLinking(true);
+                socketRef.current.emit('connect_iq', { 
+                    uid: currentUser.uid, 
+                    email: config.iqEmail, 
+                    password: config.iqPassword, 
+                    mode: 'PRACTICE' 
+                });
+            }
+        }
+    } catch (e) {
+        console.error("Error cargando config:", e);
+    }
+  };
+
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (u) => {
       if (u) {
         setUser(u);
         addLog(`Usuario ${u.email} activo.`);
+        if (socketRef.current?.connected) {
+            loadUserConfig(u);
+        }
       } else {
         setUser(null);
       }
@@ -91,6 +118,11 @@ const App = () => {
 
     socketRef.current.on('connect', () => {
         addLog("📶 Sesión Cloud vinculada con éxito.");
+        // Si ya hay un usuario al conectar el socket, cargamos su config
+        if (auth.currentUser) {
+            socketRef.current.emit('auth_link', auth.currentUser.uid);
+            loadUserConfig(auth.currentUser);
+        }
     });
 
     socketRef.current.on('connect_error', (err) => {
@@ -117,7 +149,9 @@ const App = () => {
   }, []);
 
   useEffect(() => {
-    if (user && socketRef.current) socketRef.current.emit('auth_link', user.uid);
+    if (user && socketRef.current?.connected) {
+        socketRef.current.emit('auth_link', user.uid);
+    }
   }, [user]);
 
   const handleAuth = async (e) => {
@@ -147,13 +181,34 @@ const App = () => {
     setUser(null);
   };
 
-  const handleIqLink = () => {
-    const email = document.getElementById('iq_email').value;
-    const pass = document.getElementById('iq_pass').value;
-    if(!email || !pass) return;
+  const handleIqLink = async () => {
+    const iqEmail = document.getElementById('iq_email').value;
+    const iqPass = document.getElementById('iq_pass').value;
+    if(!iqEmail || !iqPass) return;
+    
     setIsLinking(true);
-    addLog("⏳ Iniciando vínculo con el Broker...");
-    socketRef.current.emit('connect_iq', { uid: user.uid, email, password: pass, mode: 'PRACTICE' });
+    addLog("⏳ Guardando y vinculando con el Broker...");
+
+    try {
+        // GUARDAR EN FIRESTORE PARA PERSISTENCIA
+        await setDoc(doc(db, "users", user.uid), {
+            iqEmail,
+            iqPassword: iqPass,
+            updatedAt: serverTimestamp()
+        }, { merge: true });
+
+        // EMITIR AL SERVIDOR
+        socketRef.current.emit('connect_iq', { 
+            uid: user.uid, 
+            email: iqEmail, 
+            password: iqPass, 
+            mode: 'PRACTICE' 
+        });
+    } catch (err) {
+        console.error("Error guardando config:", err);
+        addLog("❌ Error al guardar configuración local");
+        setIsLinking(false);
+    }
   };
 
   if (!user) {
