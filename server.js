@@ -9,119 +9,176 @@ import admin from 'firebase-admin';
 
 dotenv.config();
 
-// Inicialización de Firebase Admin (Requiere Service Account JSON o variables de entorno)
-// Por ahora, asumimos configuración mínima para no bloquear el inicio
-if (process.env.FIREBASE_SERVICE_ACCOUNT) {
-    try {
-        const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
-        admin.initializeApp({
-            credential: admin.credential.cert(serviceAccount)
-        });
-        console.log("✅ Firebase Admin Inicializado");
-    } catch (e) {
-        console.error("❌ Fallo Firebase Admin:", e.message);
-    }
-}
+// CONFIGURACIÓN DE FIREBASE ADMIN (OPCIONAL EN ESTE PASO PERO RECOMENDADO)
+// Si tienes el archivo serviceAccountKey.json, descomenta esto:
+/*
+import serviceAccount from "./serviceAccountKey.json" assert { type: "json" };
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount)
+});
+const db = admin.firestore();
+*/
 
 const app = express();
-app.use(cors({ origin: "*" })); // Muy permisivo para no fallar en el despliegue
+app.use(cors({ origin: "*" })); 
 
 const httpServer = createServer(app);
 const io = new Server(httpServer, {
   cors: { 
-    origin: "*", // Permitir que la App de Firebase se comunique
+    origin: "*", 
     methods: ["GET", "POST"]
   }
 });
 
 // Almacén dinámico de conexiones por usuario (UID)
-const userSessions = new Map();
+const userSessions = new Map(); 
 
-const syncUserBalances = (uid, socket = null) => {
-    const session = userSessions.get(uid);
-    if (session && session.connected && session.profile) {
-        const profile = session.profile;
-        let demo = 0, real = 0;
-        profile.balances.forEach(b => {
-            if (b.type === 4) demo = b.amount;
-            else if (b.type === 1) real = b.amount;
-        });
-        const data = { demo: demo.toFixed(2), real: real.toFixed(2) };
-        if (socket) socket.emit('balance_sync', data);
-        else io.to(uid).emit('balance_sync', data);
-        return data;
+// --- FUNCIONES MATEMÁTICAS DE TRADING (ESTRATEGIA ROBERT HERRERA) ---
+
+function calculateRSI(closes, period = 6) {
+    if (closes.length < period + 1) return 50;
+    let gains = 0;
+    let losses = 0;
+    for (let i = closes.length - period; i < closes.length; i++) {
+        const diff = closes[i] - closes[i - 1];
+        if (diff >= 0) gains += diff;
+        else losses -= diff;
     }
-    return { demo: "10000.00", real: "0.00" };
-};
+    if (losses === 0) return 100;
+    const rs = (gains / period) / (losses / period);
+    return 100 - (100 / (1 + rs));
+}
+
+function calculateCCI(candles, period = 14) {
+    if (candles.length < period) return 0;
+    const typicalPrices = candles.slice(-period).map(c => (c.max + c.min + c.close) / 3);
+    const sma = typicalPrices.reduce((a, b) => a + b, 0) / period;
+    const meanDev = typicalPrices.map(tp => Math.abs(tp - sma)).reduce((a, b) => a + b, 0) / period;
+    if (meanDev === 0) return 0;
+    return (typicalPrices[typicalPrices.length - 1] - sma) / (0.015 * meanDev);
+}
+
+// ------------------------------------------------------------------
 
 io.on('connection', (socket) => {
-  console.log('✅ Nuevo Socket vinculado');
+  console.log(`🔌 Cliente Conectado: ${socket.id}`);
 
-  // Enlace del socket a un Usuario de Firebase
-  socket.on('auth_link', async (uid) => {
-      socket.join(uid);
-      console.log(`🔗 Usuario ${uid} vinculado al socket`);
-      if (userSessions.has(uid)) {
-          syncUserBalances(uid, socket);
-      }
+  // Vincular Socket con UID de Firebase
+  socket.on('auth_link', (uid) => {
+    socket.join(uid);
+    console.log(`👤 Usuario ${uid} vinculado a Socket ${socket.id}`);
   });
 
+  // Conexión al Broker (IQ Option)
   socket.on('connect_iq', async (creds) => {
-      const { uid, email, password, mode } = creds;
-      console.log(`📡 Intentando conectar IQ para ${email} (UID: ${uid})...`);
+    const { uid, email, password, mode } = creds;
+    console.log(`⏳ Intentando conectar IQ para ${email} (UID: ${uid})...`);
+    
+    try {
+      const api = new IQOptionApi(email, password);
+      // Timeout de 30 segundos para no quedar cargando por siempre
+      const connectPromise = api.connectAsync();
+      const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 30000));
       
-      try {
-          const api = new IQOptionApi(email, password);
-          const profile = await api.connectAsync();
-          
-          userSessions.set(uid, {
-              api,
-              profile,
-              connected: true,
-              email
+      const profile = await Promise.race([connectPromise, timeoutPromise]);
+      
+      userSessions.set(uid, { api, email, mode });
+      io.to(uid).emit('iq_connected', { name: profile.name, email });
+      console.log(`✅ Conexión Exitosa: ${profile.name}`);
+
+      // Suscribirse a EUR/USD-OTC por defecto
+      const activePair = 'EURUSD-OTC';
+      await api.subscribeCandles(activePair, 1); // 1 = M1
+
+      api.on('candle', (candle) => {
+          // Cada nueva vela, enviamos precios y analizamos estrategia
+          io.to(uid).emit('price_update', { 
+            pair: activePair, 
+            price: candle.close.toFixed(5),
+            timestamp: new Date().toLocaleTimeString()
           });
+          
+          // --- ANALIZADOR DE ESTRATEGIA ROBERT HERRERA v1 ---
+          const candles = api.getCandles(activePair, 1);
+          if (candles.length > 20) {
+              const closes = candles.map(c => c.close);
+              const rsi = calculateRSI(closes, 6);
+              const cci = calculateCCI(candles, 14);
+              
+              const isCall = rsi < 30 && cci < -100;
+              const isPut = rsi > 70 && cci > 100;
 
-          io.to(uid).emit('iq_connected', { name: profile.name, email });
-          syncUserBalances(uid);
-          console.log(`✅ ${profile.name} conectado exitosamente`);
+              if (isCall) io.to(uid).emit('signal', { type: 'CALL', rsi, cci, pair: activePair });
+              if (isPut) io.to(uid).emit('signal', { type: 'PUT', rsi, cci, pair: activePair });
+          }
+      });
 
-      } catch (err) {
-          console.error(`❌ Error IQ (${uid}):`, err.message);
-          socket.emit('iq_error', { msg: 'Fallo al autenticar en IQ Option' });
-      }
-  });
+      // Sincronizar saldos cada 10 segundos
+      const balanceInterval = setInterval(async () => {
+          if (!userSessions.has(uid)) return clearInterval(balanceInterval);
+          try {
+            const balances = await api.getBalances();
+            const demo = balances.find(b => b.type === 4)?.amount || '0.00';
+            const real = balances.find(b => b.type === 1)?.amount || '0.00';
+            io.to(uid).emit('balance_sync', { demo, real });
+          } catch (e) { console.error("Balance sync error", e); }
+      }, 10000);
 
-  socket.on('execute_trade', async (data) => {
-    const { uid, pair, amount } = data;
-    const session = userSessions.get(uid);
-
-    if (session && session.connected) {
-        try {
-            // Ejemplo disparo real
-            await session.api.sendOrderBinary(pair.replace('/', ''), 'call', 60, 0, 90, amount);
-            socket.emit('trade_result', { status: 'success', msg: 'Real order open' });
-        } catch (err) {
-            socket.emit('trade_result', { status: 'error', msg: 'Broker error' });
-        }
-    } else {
-        // Fallback simulación
-        setTimeout(() => {
-            socket.emit('trade_result', { status: 'win', profit: amount * 0.85, msg: 'Simulada' });
-        }, 1500);
+    } catch (err) {
+      console.error("❌ Error IQ:", err.message);
+      socket.emit('iq_error', { msg: 'Fallo al autenticar o IP bloqueada. Prueba con Glitch/Túnel.' });
     }
   });
+
+  // --- MOTOR DE BACKTESTING ---
+  socket.on('run_backtest', async (data) => {
+      const { uid, pair = 'EURUSD-OTC' } = data;
+      const session = userSessions.get(uid);
+      if (!session) return;
+
+      console.log(`🧪 Iniciando Backtest para ${pair}...`);
+      try {
+          const candles = await session.api.getCandlesAsync(pair, 60, 500); // 500 velas M1
+          let wins = 0;
+          let losses = 0;
+          let totalSignals = 0;
+
+          for (let i = 20; i < candles.length - 1; i++) {
+              const slice = candles.slice(0, i + 1);
+              const closes = slice.map(c => c.close);
+              const rsi = calculateRSI(closes, 6);
+              const cci = calculateCCI(slice, 14);
+
+              const isCall = rsi < 30 && cci < -100;
+              const isPut = rsi > 70 && cci > 100;
+
+              if (isCall || isPut) {
+                  totalSignals++;
+                  const nextCandle = candles[i + 1];
+                  const won = isCall ? (nextCandle.close > candles[i].close) : (nextCandle.close < candles[i].close);
+                  if (won) wins++; else losses++;
+              }
+          }
+
+          const rate = totalSignals > 0 ? ((wins / totalSignals) * 100).toFixed(2) : 0;
+          io.to(uid).emit('backtest_result', { pair, rate, totalSignals });
+      } catch (e) {
+          console.error("Backtest Error", e);
+      }
+  });
+
+  socket.on('disconnect', () => {
+    console.log(`🔌 Cliente Desconectado: ${socket.id}`);
+  });
 });
 
-const PORT = process.env.PORT || 8080; // Cloud cada vez más usa 8080 por defecto
+// Cloud Ready (Render/Heroku usará PORT, Glitch también)
+const PORT = process.env.PORT || 8080; 
 httpServer.listen(PORT, () => {
-  console.log(`📡 Multi-User Gateway (Cloud Ready) en Puerto ${PORT}`);
+  console.log(`📡 Multi-User Gateway (Trading Engine) en Puerto ${PORT}`);
 });
 
-// Manejo de apagado limpio para no dejar trades colgados
 process.on('SIGTERM', () => {
-    console.log('🛑 Cerrando puente de trading por señal (Cloud)...');
-    userSessions.forEach(s => {
-        if (s.api && s.api.getIQOptionWs) s.api.getIQOptionWs().terminate();
-    });
-    process.exit(0);
+  console.log('Terminando procesos...');
+  process.exit(0);
 });
