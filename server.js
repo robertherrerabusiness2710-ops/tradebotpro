@@ -5,19 +5,8 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import pkg from 'iq-option-client';
 const { IQOptionApi } = pkg;
-import admin from 'firebase-admin';
 
 dotenv.config();
-
-// CONFIGURACIÓN DE FIREBASE ADMIN (OPCIONAL EN ESTE PASO PERO RECOMENDADO)
-// Si tienes el archivo serviceAccountKey.json, descomenta esto:
-/*
-import serviceAccount from "./serviceAccountKey.json" assert { type: "json" };
-admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount)
-});
-const db = admin.firestore();
-*/
 
 const app = express();
 app.use(cors({ origin: "*" })); 
@@ -30,10 +19,9 @@ const io = new Server(httpServer, {
   }
 });
 
-// Almacén dinámico de conexiones por usuario (UID)
 const userSessions = new Map(); 
 
-// --- FUNCIONES MATEMÁTICAS DE TRADING (ESTRATEGIA ROBERT HERRERA) ---
+// --- CALCULOS MATEMÁTICOS DE TRADING (ESTRATEGIA ROBERT HERRERA) ---
 
 function calculateRSI(closes, period = 6) {
     if (closes.length < period + 1) return 50;
@@ -51,11 +39,11 @@ function calculateRSI(closes, period = 6) {
 
 function calculateCCI(candles, period = 14) {
     if (candles.length < period) return 0;
-    const typicalPrices = candles.slice(-period).map(c => (c.max + c.min + c.close) / 3);
-    const sma = typicalPrices.reduce((a, b) => a + b, 0) / period;
-    const meanDev = typicalPrices.map(tp => Math.abs(tp - sma)).reduce((a, b) => a + b, 0) / period;
+    const tps = candles.slice(-period).map(c => (c.max + c.min + c.close) / 3);
+    const sma = tps.reduce((a, b) => a + b, 0) / period;
+    const meanDev = tps.map(tp => Math.abs(tp - sma)).reduce((a, b) => a + b, 0) / period;
     if (meanDev === 0) return 0;
-    return (typicalPrices[typicalPrices.length - 1] - sma) / (0.015 * meanDev);
+    return (tps[tps.length - 1] - sma) / (0.015 * meanDev);
 }
 
 // ------------------------------------------------------------------
@@ -63,122 +51,105 @@ function calculateCCI(candles, period = 14) {
 io.on('connection', (socket) => {
   console.log(`🔌 Cliente Conectado: ${socket.id}`);
 
-  // Vincular Socket con UID de Firebase
   socket.on('auth_link', (uid) => {
     socket.join(uid);
-    console.log(`👤 Usuario ${uid} vinculado a Socket ${socket.id}`);
+    console.log(`👤 Usuario ${uid} vinculado`);
   });
 
-  // Conexión al Broker (IQ Option)
   socket.on('connect_iq', async (creds) => {
-    const { uid, email, password, mode } = creds;
-    console.log(`⏳ Intentando conectar IQ para ${email} (UID: ${uid})...`);
+    const { uid, email, password } = creds;
+    console.log(`⏳ Conectando IQ para ${email}...`);
     
     try {
       const api = new IQOptionApi(email, password);
-      // Timeout de 30 segundos para no quedar cargando por siempre
+      // Timeout 30s
       const connectPromise = api.connectAsync();
-      const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 30000));
-      
+      const timeoutPromise = new Promise((_, r) => setTimeout(() => r(new Error('Timeout')), 30000));
       const profile = await Promise.race([connectPromise, timeoutPromise]);
       
-      userSessions.set(uid, { api, email, mode });
+      userSessions.set(uid, { api, email });
       io.to(uid).emit('iq_connected', { name: profile.name, email });
-      console.log(`✅ Conexión Exitosa: ${profile.name}`);
+      console.log(`✅ Conexión OK: ${profile.name}`);
 
-      // Suscribirse a EUR/USD-OTC por defecto
-      const activePair = 'EURUSD-OTC';
-      await api.subscribeCandles(activePair, 1); // 1 = M1
+      // Suscribirse a cotización en vivo (EURUSD-OTC por defecto)
+      const defaultPair = 'EURUSD-OTC';
+      await api.subscribeCandles(defaultPair, 1);
 
       api.on('candle', (candle) => {
-          // Cada nueva vela, enviamos precios y analizamos estrategia
           io.to(uid).emit('price_update', { 
-            pair: activePair, 
+            pair: defaultPair, 
             price: candle.close.toFixed(5),
             timestamp: new Date().toLocaleTimeString()
           });
           
-          // --- ANALIZADOR DE ESTRATEGIA ROBERT HERRERA v1 ---
-          const candles = api.getCandles(activePair, 1);
+          // ANALISIS EN VIVO ESTRATEGIA ROBERT HERRERA
+          const candles = api.getCandles(defaultPair, 1);
           if (candles.length > 20) {
-              const closes = candles.map(c => c.close);
-              const rsi = calculateRSI(closes, 6);
+              const rsi = calculateRSI(candles.map(c => c.close), 6);
               const cci = calculateCCI(candles, 14);
-              
-              const isCall = rsi < 30 && cci < -100;
-              const isPut = rsi > 70 && cci > 100;
-
-              if (isCall) io.to(uid).emit('signal', { type: 'CALL', rsi, cci, pair: activePair });
-              if (isPut) io.to(uid).emit('signal', { type: 'PUT', rsi, cci, pair: activePair });
+              if ((rsi < 30 && cci < -100) || (rsi > 70 && cci > 100)) {
+                  const type = rsi < 30 ? 'CALL' : 'PUT';
+                  io.to(uid).emit('signal', { type, rsi, cci, pair: defaultPair });
+              }
           }
       });
 
-      // Sincronizar saldos cada 10 segundos
-      const balanceInterval = setInterval(async () => {
-          if (!userSessions.has(uid)) return clearInterval(balanceInterval);
+      // Sincronizar saldos
+      setInterval(async () => {
+          if (!userSessions.has(uid)) return;
           try {
             const balances = await api.getBalances();
             const demo = balances.find(b => b.type === 4)?.amount || '0.00';
             const real = balances.find(b => b.type === 1)?.amount || '0.00';
             io.to(uid).emit('balance_sync', { demo, real });
-          } catch (e) { console.error("Balance sync error", e); }
-      }, 10000);
+          } catch (e) {}
+      }, 15000);
 
     } catch (err) {
       console.error("❌ Error IQ:", err.message);
-      socket.emit('iq_error', { msg: 'Fallo al autenticar o IP bloqueada. Prueba con Glitch/Túnel.' });
+      socket.emit('iq_error', { msg: 'Fallo al conectar. Revisa tu cuenta o IP.' });
     }
   });
 
-  // --- MOTOR DE BACKTESTING ---
+  // --- MOTOR DE BACKTESTING ULTRA-ESTABLE ---
   socket.on('run_backtest', async (data) => {
-      const { uid, pair = 'EURUSD-OTC' } = data;
+      const { uid, pair } = data;
       const session = userSessions.get(uid);
       if (!session) return;
 
-      console.log(`🧪 Iniciando Backtest para ${pair}...`);
+      console.log(`🧪 Scaneando: ${pair}...`);
       try {
-          const candles = await session.api.getCandlesAsync(pair, 60, 500); // 500 velas M1
-          let wins = 0;
-          let losses = 0;
-          let totalSignals = 0;
+          // Método compatible para obtener velas históricas
+          const candles = await session.api.getCandlesAsync(pair, 60, 500); 
+          let wins = 0; let signals = 0;
 
           for (let i = 20; i < candles.length - 1; i++) {
               const slice = candles.slice(0, i + 1);
-              const closes = slice.map(c => c.close);
-              const rsi = calculateRSI(closes, 6);
+              const rsi = calculateRSI(slice.map(c => c.close), 6);
               const cci = calculateCCI(slice, 14);
 
-              const isCall = rsi < 30 && cci < -100;
-              const isPut = rsi > 70 && cci > 100;
-
-              if (isCall || isPut) {
-                  totalSignals++;
-                  const nextCandle = candles[i + 1];
-                  const won = isCall ? (nextCandle.close > candles[i].close) : (nextCandle.close < candles[i].close);
-                  if (won) wins++; else losses++;
+              const isSignal = (rsi < 30 && cci < -100) || (rsi > 70 && cci > 100);
+              if (isSignal) {
+                  signals++;
+                  const won = rsi < 30 ? (candles[i+1].close > candles[i].close) : (candles[i+1].close < candles[i].close);
+                  if (won) wins++;
               }
           }
 
-          const rate = totalSignals > 0 ? ((wins / totalSignals) * 100).toFixed(2) : 0;
-          io.to(uid).emit('backtest_result', { pair, rate, totalSignals });
+          const rate = signals > 0 ? ((wins / signals) * 100).toFixed(2) : 0;
+          io.to(uid).emit('backtest_result', { pair, rate, totalSignals: signals });
       } catch (e) {
-          console.error("Backtest Error", e);
+          console.error("Backtest Error:", e.message);
+          io.to(uid).emit('iq_error', { msg: `No se pudo escanear ${pair}` });
       }
   });
 
   socket.on('disconnect', () => {
-    console.log(`🔌 Cliente Desconectado: ${socket.id}`);
+    console.log(`🔌 Cliente Desconectado`);
   });
 });
 
-// Cloud Ready (Render/Heroku usará PORT, Glitch también)
 const PORT = process.env.PORT || 8080; 
 httpServer.listen(PORT, () => {
-  console.log(`📡 Multi-User Gateway (Trading Engine) en Puerto ${PORT}`);
-});
-
-process.on('SIGTERM', () => {
-  console.log('Terminando procesos...');
-  process.exit(0);
+  console.log(`📡 Multi-User Hub Puerto ${PORT}`);
 });
