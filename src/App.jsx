@@ -25,7 +25,8 @@ import {
   History,
   TrendingDown,
   Database,
-  Search
+  Search,
+  Server
 } from 'lucide-react';
 import { io } from 'socket.io-client';
 import { 
@@ -57,8 +58,8 @@ const App = () => {
   const [logs, setLogs] = useState([]);
   const [isLinking, setIsLinking] = useState(false);
   
-  // OPCIONES DE OTC, BACKTEST Y GATEWAY
-  const [gatewayUrl, setGatewayUrl] = useState(localStorage.getItem('tradebot_gateway') || 'https://tradebotpro.onrender.com');
+  // OPCIONES DE GATEWAY (HUGGING FACE, GLITCH O LOCAL TUNNEL)
+  const [gatewayUrl, setGatewayUrl] = useState(localStorage.getItem('tradebot_gateway') || 'https://robert2710-robert-tradebot.hf.space');
   const [backtestResult, setBacktestResult] = useState({ pair: '', rate: 0, signals: 0 });
   const [isBacktesting, setIsBacktesting] = useState(false);
   const [selectedAsset, setSelectedAsset] = useState('EURUSD-OTC');
@@ -81,14 +82,14 @@ const App = () => {
   };
 
   const loadUserConfig = async (currentUser) => {
-    if (!currentUser || !socketRef.current) return;
+    if (!currentUser || !socketRef.current?.connected) return;
     try {
         const docRef = doc(db, "users", currentUser.uid);
         const docSnap = await getDoc(docRef);
         if (docSnap.exists()) {
             const config = docSnap.data();
             if (config.iqEmail && config.iqPassword) {
-                addLog("⏳ Sincronizando con el Broker desde la nube...");
+                addLog("⏳ Re-vinculando Broker desde la nube...");
                 setIsLinking(true);
                 socketRef.current.emit('connect_iq', { 
                     uid: currentUser.uid, 
@@ -112,16 +113,17 @@ const App = () => {
       }
     });
 
-    // CONEXION A LA NUBE (RENDER O GLITCH)
-    socketRef.current = io(gatewayUrl, {
+    // CONEXION AL GATEWAY CLOUD O LOCAL (Dinamico)
+    const cleanUrl = gatewayUrl.replace(/\/$/, ""); // Quitar slash final si existe
+    socketRef.current = io(cleanUrl, {
         reconnection: true,
-        reconnectionAttempts: 10,
+        reconnectionAttempts: 20,
         transports: ['websocket', 'polling'],
-        timeout: 10000
+        timeout: 15000
     });
 
     socketRef.current.on('connect', () => {
-        addLog(`📶 Enlace Cloud Activo: ${gatewayUrl}`);
+        addLog(`📶 Gateway Linkeado: ${cleanUrl}`);
         if (auth.currentUser) {
             socketRef.current.emit('auth_link', auth.currentUser.uid);
             loadUserConfig(auth.currentUser);
@@ -129,7 +131,7 @@ const App = () => {
     });
 
     socketRef.current.on('connect_error', (err) => {
-        addLog(`⚠️ Reintentando enlace con la nube...`);
+        addLog(`⚠️ Esperando a la nube... (Protocolo en pausa)`);
     });
 
     socketRef.current.on('price_update', (data) => setLivePrice(data));
@@ -163,13 +165,13 @@ const App = () => {
   }, [gatewayUrl]);
 
   const runBacktest = (e) => {
-      if(e) e.preventDefault(); // SEGURO ANTI-REFRESCO
+      if(e && e.preventDefault) e.preventDefault(); // SUPER-BLOQUEO DE RECARGA
       if (!user || !socketRef.current?.connected) {
-          addLog("❌ Error: Debes estar conectado al Gateway y al Broker");
+          addLog("❌ Error: No hay enlace con el Gateway");
           return;
       }
       setIsBacktesting(true);
-      addLog(`🔎 Escaneando Multi-Activo en ${selectedAsset}...`);
+      addLog(`🔎 Analizando OTC en ${selectedAsset}...`);
       socketRef.current.emit('run_backtest', { uid: user.uid, pair: selectedAsset });
   };
 
@@ -189,26 +191,45 @@ const App = () => {
     setUser(null);
   };
 
-  const updateGateway = () => {
+  const updateGateway = (e) => {
+      if(e && e.preventDefault) e.preventDefault();
       const url = document.getElementById('gateway_url').value;
       if(!url) return;
       localStorage.setItem('tradebot_gateway', url);
       setGatewayUrl(url);
       addLog(`🔄 Cambio de Gateway a: ${url}`);
-      window.location.reload(); // Recargar para aplicar nueva conexion socket
+      window.location.reload(); 
   };
 
   const handleIqLink = async (e) => {
-    if(e) e.preventDefault();
-    const iqEmail = document.getElementById('iq_email').value;
-    const iqPass = document.getElementById('iq_pass').value;
-    if(!iqEmail || !iqPass) return;
+    // BLINDAJE TOTAL ANTI-PANTALLA BLANCA
+    if(e && e.preventDefault) e.preventDefault();
+    if(e && e.stopPropagation) e.stopPropagation();
+    
+    const iqEmail = document.getElementById('iq_email_input').value;
+    const iqPass = document.getElementById('iq_pass_input').value;
+    
+    if(!iqEmail || !iqPass) {
+        addLog("❌ Error: Faltan credenciales");
+        return;
+    }
+    
     setIsLinking(true);
-    addLog("⏳ Guardando credenciales y vinculando...");
+    addLog("⏳ Vinculando protocolos de seguridad...");
+    
     try {
         await setDoc(doc(db, "users", user.uid), { iqEmail, iqPassword: iqPass }, { merge: true });
-        socketRef.current.emit('connect_iq', { uid: user.uid, email: iqEmail, password: iqPass, mode: 'PRACTICE' });
-    } catch (err) { setIsLinking(false); addLog("❌ Error al guardar en Firebase"); }
+        if(socketRef.current?.connected) {
+            socketRef.current.emit('connect_iq', { uid: user.uid, email: iqEmail, password: iqPass, mode: 'PRACTICE' });
+        } else {
+            addLog("❌ Error: El Gateway no responde");
+            setIsLinking(false);
+        }
+    } catch (err) { 
+        setIsLinking(false); 
+        addLog("❌ Error Firebase: No se pudo guardar la clave"); 
+    }
+    return false; // Evita cualquier accion extra
   };
 
   if (!user) {
@@ -217,7 +238,7 @@ const App = () => {
         <div className="max-w-md w-full bg-slate-900 border border-slate-800 rounded-3xl p-10 shadow-2xl relative">
             <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-600 to-indigo-500"></div>
             <h1 className="text-3xl font-black text-white mb-1 text-center uppercase tracking-tighter">TradeBot PRO</h1>
-            <p className="text-slate-500 mb-8 text-center text-xs font-bold uppercase tracking-widest">Cloud Trading Center</p>
+            <p className="text-slate-500 mb-8 text-center text-xs font-bold uppercase tracking-widest">Global Trading Engine</p>
             <form onSubmit={handleAuth} className="space-y-4">
                <div>
                   <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1 ml-1 px-1">Correo Electrónico</label>
@@ -232,14 +253,14 @@ const App = () => {
                </div>
                <button type="submit" disabled={isLoading} className="w-full bg-blue-600 hover:bg-blue-500 text-white font-black py-4 px-6 rounded-2xl transition-all shadow-lg uppercase tracking-wider text-xs">{isLoading ? 'PROCESANDO...' : 'ENTRAR'}</button>
             </form>
-            <button type="button" onClick={() => setAuthMode('register')} className="w-full mt-6 text-slate-500 hover:text-blue-400 text-[10px] font-black transition-colors uppercase tracking-widest text-center">Registrar Cuenta Nueva</button>
+            <button type="button" onClick={() => setAuthMode('register')} className="w-full mt-6 text-slate-500 hover:text-blue-400 text-[10px] font-black transition-colors uppercase tracking-widest text-center">Crear Cuenta</button>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-200 flex flex-col md:flex-row font-sans">
+    <div className="min-h-screen bg-slate-950 text-slate-200 flex flex-col md:flex-row">
       <aside className="w-full md:w-80 bg-slate-900 border-r border-slate-800 flex flex-col p-8 lg:h-screen lg:sticky lg:top-0">
         <div className="flex items-center gap-3 mb-10">
             <Activity className="w-8 h-8 text-blue-500" />
@@ -247,7 +268,7 @@ const App = () => {
         </div>
         <nav className="flex-1 space-y-2">
             {['dashboard', 'strategies', 'settings'].map(tab => (
-                <button key={tab} type="button" onClick={() => setActiveTab(tab)} className={`w-full flex items-center px-4 py-4 rounded-2xl transition-all font-black text-xs uppercase tracking-widest ${activeTab === tab ? 'bg-blue-600 text-white shadow-[0_0_15px_rgba(37,99,235,0.3)]' : 'text-slate-500 hover:bg-slate-800 hover:text-white'}`}>
+                <button key={tab} type="button" onClick={() => setActiveTab(tab)} className={`w-full flex items-center px-4 py-4 rounded-2xl transition-all font-black text-xs uppercase tracking-widest ${activeTab === tab ? 'bg-blue-600 text-white shadow-xl' : 'text-slate-500 hover:bg-slate-800 hover:text-white'}`}>
                   <span className="mr-3">{tab === 'dashboard' ? <Activity className="w-5 h-5" /> : tab === 'strategies' ? <BarChart2 className="w-5 h-5" /> : <Settings className="w-5 h-5" />}</span>
                   {tab}
                 </button>
@@ -269,27 +290,27 @@ const App = () => {
         </div>
       </aside>
 
-      <main className="flex-1 p-8 md:p-12 overflow-y-auto">
+      <main className="flex-1 p-8 md:p-12 overflow-y-auto overflow-x-hidden">
         <header className="mb-10 flex flex-col md:flex-row md:items-end justify-between gap-6">
             <div>
                 <h1 className="text-5xl font-black text-white uppercase tracking-tighter mb-2">
-                   {activeTab === 'dashboard' ? 'En Vivo' : activeTab === 'strategies' ? 'Factoría de Trading' : 'Protocolos'}
+                   {activeTab === 'dashboard' ? 'En Vivo' : activeTab === 'strategies' ? 'IA Engine' : 'Ajustes'}
                 </h1>
                 <div className="flex items-center gap-4">
                     <div className="flex items-center gap-2">
                         <div className={`w-2 h-2 rounded-full ${socketRef.current?.connected ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`}></div>
-                        <p className="text-slate-500 font-bold uppercase text-[9px] tracking-widest font-mono">Gateway: {socketRef.current?.connected ? 'Linked' : 'Offline'}</p>
+                        <p className="text-slate-500 font-bold uppercase text-[9px] tracking-widest font-mono">Gateway Status: {socketRef.current?.connected ? 'Linked' : 'Offline'}</p>
                     </div>
                 </div>
             </div>
             {activeTab === 'dashboard' && iqConnected && (
-                <div className="flex bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden divide-x divide-slate-800 shadow-xl">
-                    <div className="px-6 py-4 bg-slate-900/50 text-center">
-                        <span className="block text-[8px] text-slate-500 font-black uppercase tracking-widest mb-1">Cta. Real</span>
+                <div className="flex bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden divide-x divide-slate-800">
+                    <div className="px-6 py-4 bg-slate-900/50">
+                        <span className="block text-[8px] text-slate-500 font-black uppercase tracking-widest mb-1">Portfolio Real</span>
                         <span className="text-emerald-500 font-mono font-black">$ {balances.real}</span>
                     </div>
-                    <div className="px-6 py-4 bg-slate-900/50 text-center">
-                        <span className="block text-[8px] text-slate-500 font-black uppercase tracking-widest mb-1">Cta. Práctica</span>
+                    <div className="px-6 py-4 bg-slate-900/50">
+                        <span className="block text-[8px] text-slate-500 font-black uppercase tracking-widest mb-1">Cuenta Practica</span>
                         <span className="text-amber-500 font-mono font-black">$ {balances.demo}</span>
                     </div>
                 </div>
@@ -297,15 +318,15 @@ const App = () => {
         </header>
 
         {activeTab === 'dashboard' && (
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-in fade-in duration-500">
               <div className="lg:col-span-2 space-y-6">
-                  <div className="bg-slate-900 border border-slate-800 p-10 rounded-[2.5rem] shadow-2xl relative overflow-hidden group bg-gradient-to-br from-slate-900 to-slate-950">
+                  <div className="bg-slate-900 border border-slate-800 p-10 rounded-[2rem] shadow-2xl relative overflow-hidden group bg-gradient-to-br from-slate-900 to-slate-950">
                       <div className="absolute top-0 right-0 p-8 opacity-5 group-hover:scale-110 transition-transform"><TrendingUp className="w-40 h-40" /></div>
                       <div className="relative z-10">
                           <span className="inline-flex items-center gap-2 px-3 py-1 bg-blue-500/10 text-blue-500 text-[10px] font-black uppercase rounded-lg border border-blue-500/20 mb-6">
-                            <Zap className="w-3 h-3 animate-pulse" /> Cotización en Vivo (M1)
+                            <Zap className="w-3 h-3 animate-pulse" /> Cotización Directa Cloud
                           </span>
-                          <h2 className="text-7xl font-black text-white tracking-tighter mb-2 font-mono drop-shadow-lg">{livePrice.price}</h2>
+                          <h2 className="text-7xl font-black text-white tracking-tighter mb-2 font-mono">{livePrice.price}</h2>
                           <div className="flex items-center gap-4">
                             <p className="text-slate-500 font-black uppercase text-xs tracking-widest flex items-center gap-2">
                                 <Globe className="w-5 h-5 text-blue-500" /> {livePrice.pair}
@@ -317,13 +338,13 @@ const App = () => {
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div className="bg-slate-900/50 border border-slate-800 p-8 rounded-3xl hover:border-emerald-500/40 transition-all group">
-                          <h3 className="text-white font-black text-[10px] uppercase mb-4 tracking-widest flex items-center justify-between">
-                             <span>Top OTC Gainers</span>
-                             <TrendingUp className="w-4 h-4 text-emerald-500 group-hover:translate-x-1 transition-transform" />
+                      <div className="bg-slate-900 border border-slate-800 p-8 rounded-3xl hover:border-emerald-500/40 transition-all flex flex-col justify-between">
+                          <h3 className="text-white font-black text-[10px] uppercase mb-10 tracking-widest flex items-center justify-between">
+                             <span>Indices OTC Calientes</span>
+                             <TrendingUp className="w-4 h-4 text-emerald-500" />
                           </h3>
                           <div className="space-y-4">
-                             {['FR40-OTC', 'EU50-OTC', 'AUT20-OTC'].map(p => (
+                             {['FR40-OTC', 'EU50-OTC', 'FET-OTC'].map(p => (
                                 <div key={p} className="flex items-center justify-between border-b border-slate-800/50 pb-2">
                                     <span className="text-[11px] font-mono text-slate-400">{p}</span>
                                     <span className="text-[11px] font-black text-emerald-500">+1.24%</span>
@@ -331,17 +352,17 @@ const App = () => {
                              ))}
                           </div>
                       </div>
-                      <div className="bg-slate-900/50 border border-slate-800 p-8 rounded-3xl text-center flex flex-col items-center justify-center group hover:border-blue-500/40 transition-all">
-                          <Database className="w-10 h-10 text-slate-800 mb-4 group-hover:scale-110 transition-transform" />
-                          <p className="text-[10px] text-slate-600 font-black uppercase tracking-widest">Base de Datos Linkeada</p>
-                          <p className="text-[9px] text-slate-500 mt-2 font-mono">Resguardo Cloud: Activo</p>
+                      <div className="bg-slate-900 border border-slate-800 p-8 rounded-3xl text-center flex flex-col items-center justify-center hover:border-blue-500/40 transition-all">
+                          <Database className="w-10 h-10 text-slate-800 mb-4" />
+                          <p className="text-[10px] text-slate-600 font-black uppercase tracking-widest">Persistencia Cloud: Activa</p>
+                          <p className="text-[9px] text-slate-500 mt-2 font-mono">Resguardo encriptado: Ok</p>
                       </div>
                   </div>
               </div>
 
-              <div className="bg-slate-900 border border-slate-800 p-8 rounded-[2rem] shadow-xl flex flex-col h-full bg-gradient-to-b from-slate-900 to-slate-950">
+              <div className="bg-slate-900 border border-slate-800 p-8 rounded-[2rem] shadow-xl flex flex-col bg-gradient-to-b from-slate-900 to-slate-950">
                   <h3 className="text-white font-black text-[10px] uppercase mb-6 tracking-widest flex items-center gap-2">
-                    <History className="w-4 h-4 text-blue-500" /> Monitor en la Nube
+                    <History className="w-4 h-4 text-blue-500" /> Monitor de Operaciones Cloud
                   </h3>
                   <div className="space-y-4 overflow-y-auto max-h-[600px] flex-1 pr-2 custom-scrollbar">
                       {logs.map((log, i) => (
@@ -352,29 +373,29 @@ const App = () => {
                               </div>
                           </div>
                       ))}
-                      {logs.length === 0 && <p className="text-slate-700 text-[9px] text-center mt-10 font-bold uppercase tracking-widest animate-pulse">Iniciando protocolos...</p>}
+                      {logs.length === 0 && <p className="text-slate-700 text-[9px] text-center mt-10 font-bold uppercase tracking-widest animate-pulse">Iniciando protocolos de seguridad...</p>}
                   </div>
               </div>
           </div>
         )}
         
         {activeTab === 'strategies' && (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-in zoom-in-95 duration-500">
              {strategies.map(st => (
-                <div key={st.id} className={`bg-slate-900 border border-slate-800 p-8 rounded-[2.5rem] shadow-2xl relative overflow-hidden group hover:border-blue-500 transition-all ${st.isActive ? 'ring-2 ring-blue-600' : ''}`}>
+                <div key={st.id} className={`bg-slate-900 border border-slate-800 p-8 rounded-[2rem] shadow-2xl relative overflow-hidden group hover:border-blue-500 transition-all ${st.isActive ? 'ring-2 ring-blue-600' : ''}`}>
                    <h3 className="text-2xl font-black text-white mb-2 uppercase tracking-tighter">{st.name}</h3>
                    <div className="flex items-center gap-2 mb-6 text-blue-500">
                         <Zap className="w-3 h-3" />
-                        <span className="text-[9px] font-black uppercase tracking-widest">IA Advanced Reversal Engine</span>
+                        <span className="text-[9px] font-black uppercase tracking-widest">Motor Reversal v2.1</span>
                    </div>
                    
                    <div className="grid grid-cols-2 gap-3 mb-8">
                        <div className="bg-slate-950/50 p-4 rounded-3xl border border-slate-800 text-center">
-                          <span className="block text-[8px] text-slate-600 font-black uppercase mb-1 tracking-widest">Backtest Win %</span>
+                          <span className="block text-[8px] text-slate-600 font-black uppercase mb-1 tracking-widest">Win Rate</span>
                           <span className="text-2xl font-mono font-black text-emerald-500">{st.id === 1 && backtestResult.rate > 0 ? `${backtestResult.rate}%` : '--'}</span>
                        </div>
                        <div className="bg-slate-950/50 p-4 rounded-3xl border border-slate-800 text-center">
-                          <span className="block text-[8px] text-slate-600 font-black uppercase mb-1 tracking-widest">M1 Signals</span>
+                          <span className="block text-[8px] text-slate-600 font-black uppercase mb-1 tracking-widest">Señales</span>
                           <span className="text-2xl font-mono font-black text-blue-500">{st.id === 1 && backtestResult.signals > 0 ? backtestResult.signals : '--'}</span>
                        </div>
                    </div>
@@ -389,7 +410,6 @@ const App = () => {
                               <optgroup label="Forex OTC">
                                 <option value="EURUSD-OTC">EUR/USD (OTC)</option>
                                 <option value="GBPUSD-OTC">GBP/USD (OTC)</option>
-                                <option value="AUDCAD-OTC">AUD/CAD (OTC)</option>
                               </optgroup>
                               <optgroup label="Indices OTC">
                                 <option value="FR40-OTC">FR 40 France (OTC)</option>
@@ -410,12 +430,12 @@ const App = () => {
                         className="w-full py-4 bg-slate-800 hover:bg-slate-700 text-white rounded-2xl text-[11px] font-black uppercase tracking-widest flex items-center justify-center gap-2 transition-all disabled:opacity-30 disabled:cursor-not-allowed group"
                        >
                           {isBacktesting ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Search className="w-5 h-5 group-hover:scale-110 transition-transform" />}
-                          Scann & Backtest OTC
+                          Scann & Backtest Robert
                        </button>
 
-                       <button type="button" className={`w-full py-5 rounded-[1.5rem] text-[12px] font-black uppercase tracking-widest flex items-center justify-center gap-3 transition-all ${st.isActive ? 'bg-rose-600 text-white shadow-rose-900/20 shadow-xl' : 'bg-blue-600 hover:bg-blue-500 text-white shadow-blue-900/40 shadow-xl'}`}>
+                       <button type="button" className={`w-full py-5 rounded-[1.5rem] text-[12px] font-black uppercase tracking-widest flex items-center justify-center gap-3 transition-all ${st.isActive ? 'bg-rose-600 text-white shadow-xl' : 'bg-blue-600 hover:bg-blue-500 text-white shadow-xl'}`}>
                           {st.isActive ? <Square className="w-5 h-5 fill-current" /> : <Play className="w-5 h-5 fill-current" />}
-                          {st.isActive ? 'Detener Estrategia' : 'Activar en Broker'}
+                          {st.isActive ? 'Detener Bot' : 'Lanzar en Real'}
                        </button>
                    </div>
                 </div>
@@ -424,41 +444,51 @@ const App = () => {
         )}
         
         {activeTab === 'settings' && (
-          <div className="max-w-xl mx-auto md:mx-0 animate-in fade-in slide-in-from-right-10 duration-500">
-             <div className="bg-slate-900/80 backdrop-blur-xl border border-slate-800 rounded-[2.5rem] p-10 shadow-2xl space-y-8">
-                <div>
-                   <h2 className="text-3xl font-black text-white uppercase tracking-tighter mb-2">Protocolos de Enlace</h2>
-                   <p className="text-slate-500 text-xs font-bold font-mono tracking-widest uppercase mb-10">Configuración Centralizada Cloud</p>
-                </div>
+          <div className="max-w-xl animate-in fade-in slide-in-from-right-10 duration-500">
+             <div className="bg-slate-900 border border-slate-800 rounded-[2rem] p-10 shadow-2xl relative overflow-hidden bg-gradient-to-br from-slate-900 to-slate-950">
+                <div className="absolute top-0 right-0 p-8 opacity-5"><ShieldCheck className="w-40 h-40" /></div>
+                <h2 className="text-3xl font-black text-white mb-2 uppercase tracking-tighter">Protocolos Cloud</h2>
+                <p className="text-slate-500 text-[10px] font-black uppercase tracking-widest mb-10">Configuración Central de Enlace</p>
 
                 <div className="space-y-6">
-                   <div className="p-6 bg-slate-950/40 border-2 border-blue-500/20 rounded-3xl">
+                   <div className="p-6 bg-slate-950/50 border border-blue-500/20 rounded-3xl">
                        <label className="block text-[10px] font-black text-blue-500 uppercase tracking-widest mb-4 flex items-center gap-2">
-                          <Globe className="w-4 h-4" /> Cloud Gateway URL (Glitch/Render)
+                          <Globe className="w-4 h-4" /> Cloud Gateway (HuggingFace/Glitch/Tunnel)
                        </label>
                        <div className="flex gap-3">
-                          <input type="text" id="gateway_url" defaultValue={gatewayUrl} placeholder="https://tu-proyecto.glitch.me" className="flex-1 bg-slate-950 border border-slate-800 rounded-2xl px-6 py-4 text-white focus:outline-none focus:border-blue-500 transition-all font-mono text-xs" />
-                          <button type="button" onClick={updateGateway} className="px-6 bg-blue-600 hover:bg-blue-500 text-white rounded-2xl font-black text-[10px] uppercase transition-all shadow-lg active:scale-95">Guardar</button>
+                          <input type="text" id="gateway_url" defaultValue={gatewayUrl} placeholder="https://tu-proyecto.hf.space" className="flex-1 bg-slate-950 border border-slate-800 rounded-2xl px-6 py-4 text-white focus:outline-none focus:border-blue-500 transition-all font-mono text-xs" />
+                          <button type="button" onClick={updateGateway} className="px-6 bg-blue-600 hover:bg-blue-500 text-white rounded-2xl font-black text-[10px] uppercase shadow-lg">Enlazar</button>
                        </div>
                    </div>
 
-                   <div className="space-y-5">
-                       <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Autenticación IQ Option</label>
+                   <div className="space-y-4">
+                       <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Autenticación Broker IQ</label>
                        <div className="relative">
                           <Mail className="absolute left-6 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-                          <input type="email" id="iq_email" placeholder="correo@ejemplo.com" className="w-full bg-slate-950 border border-slate-800 rounded-2xl pl-14 pr-6 py-5 text-white focus:outline-none focus:border-blue-500 transition-all font-mono text-sm" />
+                          <input type="email" id="iq_email_input" placeholder="correo@ejemplo.com" className="w-full bg-slate-950 border border-slate-800 rounded-2xl pl-14 pr-6 py-5 text-white focus:outline-none focus:border-blue-500 transition-all font-mono text-sm" />
                        </div>
                        <div className="relative">
                           <Lock className="absolute left-6 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-                          <input type={showIqPass ? "text" : "password"} id="iq_pass" placeholder="contraseña" className="w-full bg-slate-950 border border-slate-800 rounded-2xl pl-14 pr-12 py-5 text-white focus:outline-none focus:border-blue-500 transition-all font-mono text-sm" />
+                          <input type={showIqPass ? "text" : "password"} id="iq_pass_input" placeholder="••••••••" className="w-full bg-slate-950 border border-slate-800 rounded-2xl pl-14 pr-12 py-5 text-white focus:outline-none focus:border-blue-500 transition-all font-mono text-sm" />
                           <button type="button" onClick={() => setShowIqPass(!showIqPass)} className="absolute right-6 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white transition-colors">
                               {showIqPass ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
                           </button>
                        </div>
-                       <button type="button" onClick={handleIqLink} disabled={isLinking} className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-black py-5 px-6 rounded-2xl transition-all shadow-lg uppercase tracking-wider text-xs flex items-center justify-center gap-3 active:scale-[0.98]">
+                       <button 
+                        type="button" 
+                        id="sync_button"
+                        onClick={handleIqLink} 
+                        disabled={isLinking} 
+                        className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-black py-5 px-6 rounded-2xl transition-all shadow-xl uppercase tracking-wider text-xs flex items-center justify-center gap-3 active:scale-95"
+                       >
                          {isLinking ? <RefreshCw className="w-5 h-5 animate-spin" /> : <ShieldCheck className="w-5 h-5" />}
-                         Sincronizar Broker en la Nube
+                         {isLinking ? 'Sincronizando protocolos...' : 'Sincronizar Broker en la Nube'}
                        </button>
+                   </div>
+
+                   <div className="mt-8 p-6 bg-slate-950/20 border-l-4 border-amber-500 rounded-r-3xl">
+                       <h4 className="text-[10px] font-black text-amber-500 uppercase mb-2">💡 ¿Fallo al conectar?</h4>
+                       <p className="text-[10px] text-slate-500 leading-relaxed font-bold">Si IQ Option bloquea la nube (HuggingFace/Render), usa tu propia laptop como servidor ejecutando "npm start" y usa un túnel local como Cloudflared o Ngrok.</p>
                    </div>
                 </div>
              </div>
@@ -469,8 +499,8 @@ const App = () => {
       <style dangerouslySetInnerHTML={{ __html: `
         .custom-scrollbar::-webkit-scrollbar { width: 4px; }
         .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background: #334155; border-radius: 10px; }
-        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #475569; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 10px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #334155; }
       `}} />
     </div>
   );
