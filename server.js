@@ -399,6 +399,42 @@ io.on('connection', (socket) => {
                                 if (rsi >= 70.0 && cci >= 100.0)  direccion = 'put';  // VENTA
 
                                 if (direccion) {
+                                    const currentSeconds = new Date().getSeconds();
+                                    if (currentSeconds < 58) {
+                                        const waitTime = (58 - currentSeconds) * 1000;
+                                        console.log(`[ESPERA] ${assetName} en pre-señal. Esperando ${waitTime}ms al cierre de vela...`);
+                                        socket.emit('live_bot_update', { 
+                                            phase: `⏳ Esperando cierre vela ${assetName}...`, 
+                                            trades: tradesRealizados, w: wins, l: losses 
+                                        });
+                                        await new Promise(r => setTimeout(r, waitTime));
+                                        
+                                        // RE-VERIFICAR CONDICIONES JUSTO ANTES DE CERRAR
+                                        try {
+                                            const velasConf = await api.getCandles(currentAsset, 60, 20, Date.now());
+                                            const rsiConf = calcularRSI(velasConf, 6);
+                                            const cciConf = calcularCCI(velasConf, 14);
+                                            
+                                            let dirConf = null;
+                                            if (rsiConf <= 30.0 && cciConf <= -100.0) dirConf = 'call';
+                                            if (rsiConf >= 70.0 && cciConf >= 100.0)  dirConf = 'put';
+                                            
+                                            if (!dirConf) {
+                                                console.log(`[CANCELADO] ${assetName} no cumplió condición al cierre (RSI:${rsiConf.toFixed(1)} CCI:${cciConf.toFixed(1)})`);
+                                                continue;
+                                            }
+                                            direccion = dirConf;
+                                            
+                                            // Esperar hasta el segundo 00 de la nueva vela
+                                            const finalWait = (60 - new Date().getSeconds()) * 1000;
+                                            if (finalWait > 0) await new Promise(r => setTimeout(r, finalWait));
+                                            
+                                        } catch(e) {
+                                            console.log(`[ERR RE-CHECK] ${assetName}`);
+                                            continue;
+                                        }
+                                    }
+
                                     const ultimaVela  = velasOTC[velasOTC.length - 1];
                                     const velaTs  = ultimaVela.from || ultimaVela.id || ultimaVela.at || Date.now();
                                     const lockId  = `${currentAsset}_${velaTs}`;
