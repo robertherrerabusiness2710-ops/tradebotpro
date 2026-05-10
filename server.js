@@ -142,7 +142,8 @@ io.on('connection', (socket) => {
 
                     const TARGETS = [
                         'otc', 'fr 40', 'ger 30', 'hk 33', 'us 500', 'amazon',
-                        'bitcoin', 'btc', 'ethereum', 'eth', 'litecoin', 'ltc', 'ripple', 'xrp'
+                        'bitcoin', 'btc', 'ethereum', 'eth', 'litecoin', 'ltc', 'ripple', 'xrp',
+                        'jupiter', 'tron', 'arbitrum', 'non', 'stellar', 'intel', 'polygon', 'solana'
                     ];
 
                     // Limpiar lista negra de divisas
@@ -199,7 +200,8 @@ io.on('connection', (socket) => {
                         const js = JSON.parse(message.toString());
                         const TARGETS_VIVOS = [
                             'otc', 'fr 40', 'ger 30', 'hk 33', 'us 500', 'amazon',
-                            'bitcoin', 'btc', 'ethereum', 'eth', 'litecoin', 'ltc', 'ripple', 'xrp'
+                            'bitcoin', 'btc', 'ethereum', 'eth', 'litecoin', 'ltc', 'ripple', 'xrp',
+                            'jupiter', 'tron', 'arbitrum', 'non', 'stellar', 'intel', 'polygon', 'solana'
                         ];
                         const FORBIDDEN_VIVOS = ['eur/','gbp/','usd/cad','usd/jpy'];
 
@@ -420,11 +422,12 @@ io.on('connection', (socket) => {
                                             currentAsset, side, iqOptionExpired(1), balanceId, 0, amount
                                         );
                                         
+                                        const entryPrice = order?.price || order?.entry_price || ultimaVela.close;
                                         const tradeStatus = {
                                             id: Date.now(),
                                             asset: assetName,
                                             side: side.toUpperCase(),
-                                            entry: order?.price || order?.entry_price || '---',
+                                            entry: entryPrice,
                                             rsi: rsi.toFixed(1),
                                             cci: cci.toFixed(1),
                                             time: new Date().toLocaleTimeString(),
@@ -437,16 +440,31 @@ io.on('connection', (socket) => {
                                         tradesRealizados++;
                                         console.log(`[✅ ORDEN OK] ${assetName} ${side.toUpperCase()} entrada:${tradeStatus.entry}`);
 
-                                        setTimeout(() => {
-                                            const isLoss = Math.random() > 0.55; 
-                                            tradeStatus.result = isLoss ? 'PERDIDA' : 'GANADA';
-                                            tradeStatus.color = isLoss ? 'text-red-400' : 'text-green-400';
-                                            tradeStatus.winner = !isLoss;
-                                            if (isLoss) {
-                                                losses++;
-                                                tradeLocks.set(`${currentAsset}_cd`, Date.now() + 180000);
-                                            } else { wins++; }
-                                            socket.emit('live_trade_result', tradeStatus);
+                                        setTimeout(async () => {
+                                            try {
+                                                const velasCierre = await api.getCandles(currentAsset, 60, 2, Date.now());
+                                                const finalPrice = velasCierre[velasCierre.length - 1].close;
+                                                
+                                                let isLoss = true;
+                                                if (side === 'call' && finalPrice > entryPrice) isLoss = false;
+                                                if (side === 'put' && finalPrice < entryPrice) isLoss = false;
+                                                // Si es empate, lo tomamos como pérdida en binarias usualmente, o podemos omitir.
+                                                
+                                                tradeStatus.result = isLoss ? 'PERDIDA' : 'GANADA';
+                                                tradeStatus.color = isLoss ? 'text-red-400' : 'text-green-400';
+                                                tradeStatus.winner = !isLoss;
+                                                if (isLoss) {
+                                                    losses++;
+                                                    tradeLocks.set(`${currentAsset}_cd`, Date.now() + 180000);
+                                                } else { wins++; }
+                                                socket.emit('live_trade_result', tradeStatus);
+                                            } catch (errCierre) {
+                                                console.log(`[VERIFICACION FALLIDA] ${assetName}: no se pudo obtener precio de cierre.`);
+                                                // Fallback si falla getCandles
+                                                tradeStatus.result = 'ERROR VERIF';
+                                                tradeStatus.color = 'text-yellow-400';
+                                                socket.emit('live_trade_result', tradeStatus);
+                                            }
                                         }, 65000);
 
                                     } catch(errOrder) {
