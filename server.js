@@ -251,8 +251,6 @@ io.on('connection', (socket) => {
                     const balanceSelect = balances.find(b => b.type === typeId);
                     const balanceId = balanceSelect ? balanceSelect.id : profile.balance_id;
 
-                    socket.emit('live_bot_update', { phase: `🔍 Activos encontrados: ${ACTIVOS_A_ESCANEAR.length} | Iniciando escaneo RSI+CCI...`, trades: 0, w: 0, l: 0 });
-
                     let tradesRealizados = 0;
                     let wins = 0; let losses = 0;
                     const tradeLocks = new Map(); 
@@ -261,6 +259,8 @@ io.on('connection', (socket) => {
                     // ESCÁNER: solo IDs que tenemos registrados
                     const ACTIVOS_A_ESCANEAR = [];
                     knownMarkets.forEach((name, id) => ACTIVOS_A_ESCANEAR.push(id));
+
+                    socket.emit('live_bot_update', { phase: `🔍 Activos encontrados: ${ACTIVOS_A_ESCANEAR.length} | Iniciando escaneo RSI+CCI...`, trades: 0, w: 0, l: 0 });
                     
                     if (ACTIVOS_A_ESCANEAR.length === 0) {
                         console.log(`[BOT WARNING] No se encontraron criptos configuradas en esta sesión.`);
