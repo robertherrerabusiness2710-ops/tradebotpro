@@ -100,20 +100,33 @@ io.on('connection', (socket) => {
                     // fallBack silencio
                 }
 
-                // INDICADORES MATEMÁTICOS DE ALTA PRECISIÓN
                 const calcularRSI = (velas, periodos = 6) => {
                     if (velas.length < periodos + 1) return 50;
                     let gains = 0, losses = 0;
+                    
+                    // 1. Promedio simple inicial
                     for (let i = 1; i <= periodos; i++) {
-                        const actual = velas[velas.length - i].close;
-                        const prev = velas[velas.length - i - 1].close;
-                        const diff = actual - prev;
+                        const diff = velas[i].close - velas[i - 1].close;
                         if (diff > 0) gains += diff;
                         else losses -= diff;
                     }
+                    gains /= periodos;
+                    losses /= periodos;
+                    
+                    // 2. Suavizado de Wilder (Exponential Moving Average)
+                    for (let i = periodos + 1; i < velas.length; i++) {
+                        const diff = velas[i].close - velas[i - 1].close;
+                        let currentGain = 0, currentLoss = 0;
+                        if (diff > 0) currentGain = diff;
+                        else currentLoss = -diff;
+                        
+                        gains = (gains * (periodos - 1) + currentGain) / periodos;
+                        losses = (losses * (periodos - 1) + currentLoss) / periodos;
+                    }
+                    
                     if (losses === 0) return 100;
-                    const rsi = 100 - (100 / (1 + (gains / losses)));
-                    return rsi;
+                    const rs = gains / losses;
+                    return 100 - (100 / (1 + rs));
                 };
 
                 const calcularCCI = (velas, periodos = 14) => {
@@ -344,8 +357,16 @@ io.on('connection', (socket) => {
                                     const nameOk  = !js.name || js.name === 'candles' ||
                                                     js.name === 'get-candles' || js.name === 'get-candles-v2';
                                     if (idMatch && nameOk && js.msg && !done) {
-                                        const candles = Array.isArray(js.msg) ? js.msg
+                                        let candles = Array.isArray(js.msg) ? js.msg
                                             : (js.msg.candles || js.msg.data || js.msg.result || []);
+                                            
+                                        // ASEGURAR ORDEN CRONOLÓGICO: 0 = más antigua, length-1 = actual/nueva
+                                        candles = candles.sort((a, b) => {
+                                            const tsA = a.from || a.id || a.at || 0;
+                                            const tsB = b.from || b.id || b.at || 0;
+                                            return tsA - tsB;
+                                        });
+                                            
                                         done = true;
                                         cleanup();
                                         resolve(candles);
