@@ -260,14 +260,26 @@ io.on('connection', (socket) => {
                     const ACTIVOS_A_ESCANEAR = [];
                     knownMarkets.forEach((name, id) => ACTIVOS_A_ESCANEAR.push(id));
 
-                    socket.emit('live_bot_update', { phase: `🔍 Activos encontrados: ${ACTIVOS_A_ESCANEAR.length} | Iniciando escaneo RSI+CCI...`, trades: 0, w: 0, l: 0 });
-                    
+                    // 🛡️ SISTEMA DE RESPALDO (FALLBACK)
+                    // Si el broker no envió la lista de activos a tiempo, forzamos los IDs principales de cripto
                     if (ACTIVOS_A_ESCANEAR.length === 0) {
-                        console.log(`[BOT WARNING] No se encontraron criptos configuradas en esta sesión.`);
-                        socket.emit('iq_error', { msg: '⚠️ No se encontraron activos cripto disponibles en tu cuenta IQ Option. Intenta reconectar el broker.' });
-                        socket.emit('live_bot_finished', { trades: 0, w: 0, l: 0, report: [] });
-                        return;
+                        console.log(`[BOT WARNING] Usando mapa de criptos de respaldo...`);
+                        const fallbackActivos = [
+                            { id: 816, name: 'Bitcoin' },
+                            { id: 817, name: 'Ethereum' },
+                            { id: 845, name: 'Litecoin' },
+                            { id: 1072, name: 'Ripple' },
+                            { id: 1073, name: 'Solana' },
+                            { id: 844, name: 'EOS' },
+                            { id: 847, name: 'Bitcoin Cash' }
+                        ];
+                        fallbackActivos.forEach(act => {
+                            knownMarkets.set(act.id, act.name);
+                            ACTIVOS_A_ESCANEAR.push(act.id);
+                        });
                     }
+
+                    socket.emit('live_bot_update', { phase: `🔍 Activos listos: ${ACTIVOS_A_ESCANEAR.length} | Iniciando escaneo RSI+CCI...`, trades: 0, w: 0, l: 0 });
 
                     console.log(`[BOT] Iniciando. Activos a escanear (${ACTIVOS_A_ESCANEAR.length}):`, 
                         ACTIVOS_A_ESCANEAR.map(id => `${id}=${knownMarkets.get(id)||'?'}`).join(', '));
