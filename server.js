@@ -161,8 +161,8 @@ io.on('connection', (socket) => {
                         if (!id || !name) return;
                         const n = name.toLowerCase();
                         
-                        // Prevención de activos corruptos — NO filtrar pares cripto como btc/usd, sol/usd
-                        if (n.includes('front.') || n.includes('-op')) return;
+                        // Prevención de activos corruptos
+                        if (n.includes('-op')) return;
                         
                         const isForbidden = FORBIDDEN.some(f => n.includes(f));
                         if (isForbidden) return;
@@ -223,8 +223,8 @@ io.on('connection', (socket) => {
                             const id = inst.active_id || inst.id;
                             if (!n || !id) return;
                             
-                            // Ignorar corruptos de metadatos — NO filtrar pares cripto 3/3
-                            if (n.includes('front.') || n.includes('-op')) return;
+                            // Ignorar corruptos de metadatos
+                            if (n.includes('-op')) return;
                             
                             if (FORBIDDEN_VIVOS.some(f => n.includes(f))) return;
                             
@@ -402,9 +402,9 @@ io.on('connection', (socket) => {
                                 socket.emit('scan_telemetry', { results: [...scanResults] });
 
                                 let direccion = null;
-                                // ESTRATEGIA RSI+CCI (ambos confirman)
-                                if (rsi <= 30.0 && cci <= -80.0) direccion = 'call';
-                                if (rsi >= 70.0 && cci >= 80.0)  direccion = 'put';
+                                // ESTRATEGIA RSI+CCI (ambos confirman según Interfaz Visual)
+                                if (rsi <= 30.0 && cci <= -100.0) direccion = 'call'; // COMPRA
+                                if (rsi >= 70.0 && cci >= 100.0)  direccion = 'put';  // VENTA
 
                                 if (direccion) {
                                     const ultimaVela  = velasOTC[velasOTC.length - 1];
