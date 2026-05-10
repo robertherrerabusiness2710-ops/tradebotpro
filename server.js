@@ -472,6 +472,28 @@ io.on('connection', (socket) => {
                                 trades: tradesRealizados, w: wins, l: losses 
                             });
                             setTimeout(ejecutarCiclo, 8000);
+                        } else if (botActivo && tradesRealizados >= maxTrades) {
+                            socket.emit('live_bot_update', { 
+                                phase: `⏳ Esperando cierre de operaciones... (${tradesRealizados}/${maxTrades})`,
+                                trades: tradesRealizados, w: wins, l: losses 
+                            });
+                            
+                            // Esperar a que el setTimeout de 65s de las operaciones termine
+                            // Chequeamos cada 5s si (wins + losses) == tradesRealizados
+                            const checkFinish = setInterval(() => {
+                                if (wins + losses >= tradesRealizados || !botActivo) {
+                                    clearInterval(checkFinish);
+                                    if (botActivo) {
+                                        botActivo = false;
+                                        socket.emit('live_bot_finished', { 
+                                            trades: tradesRealizados, 
+                                            w: wins, 
+                                            l: losses,
+                                            report: currentCycleTrades
+                                        });
+                                    }
+                                }
+                            }, 5000);
                         }
                     };
 
