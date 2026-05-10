@@ -59,6 +59,18 @@ io.on('connection', (socket) => {
                 
                 socket.emit('iq_connected', { name: profile.name });
                 
+                // Extraer balances iniciales
+                let userDemo = profile.balances?.find(b => b.type === 4)?.amount || 0;
+                let userReal = profile.balances?.find(b => b.type === 1)?.amount || 0;
+                
+                socket.emit('balance_sync', {
+                    demo: userDemo.toFixed(2),
+                    real: userReal.toFixed(2)
+                });
+                
+                // Guardar variables de balance en la sesion para actualizarlas
+                userSessions.get(uid).balances = { demo: userDemo, real: userReal };
+                
                 // DIAGNÓSTICO PROFUNDO: Guardar el perfil en archivo físico
                 try {
                     fs.writeFileSync(path.join(__dirname, 'profile_debug.json'), JSON.stringify(profile, null, 2));
@@ -111,6 +123,28 @@ io.on('connection', (socket) => {
                     const sma = tps.reduce((a, b) => a + b, 0) / periodos;
                     const md = tps.reduce((a, b) => a + Math.abs(b - sma), 0) / periodos;
                     return md === 0 ? 0 : (tps[tps.length - 1] - sma) / (0.015 * md);
+                };
+
+                const esLateralizado = (velas) => {
+                    if (velas.length < 10) return true;
+                    // 1. Evitar "Velas Pegadas" (Tendencia prolongada donde RSI se queda en extremo)
+                    const rsiAnt1 = calcularRSI(velas.slice(0, -1), 6);
+                    const rsiAnt2 = calcularRSI(velas.slice(0, -2), 6);
+                    const rsiAct = calcularRSI(velas, 6);
+                    
+                    if (rsiAct >= 70 && rsiAnt1 >= 70 && rsiAnt2 >= 70) return false; // Fuerte alza prolongada
+                    if (rsiAct <= 30 && rsiAnt1 <= 30 && rsiAnt2 <= 30) return false; // Fuerte baja prolongada
+
+                    // 2. Revisar la acción de precio (últimas 4 velas)
+                    const ultimas4 = velas.slice(-4);
+                    let verdes = 0; let rojas = 0;
+                    ultimas4.forEach(v => {
+                        if (v.close > v.open) verdes++;
+                        else rojas++;
+                    });
+                    if (verdes >= 4 || rojas >= 4) return false; // 4 velas seguidas en 1 dirección = tendencia
+
+                    return true;
                 };
 
                 const iqOptionExpired = (minutes) => {
@@ -398,6 +432,11 @@ io.on('connection', (socket) => {
                                 if (rsi <= 30.0 && cci <= -100.0) direccion = 'call'; // COMPRA
                                 if (rsi >= 70.0 && cci >= 100.0)  direccion = 'put';  // VENTA
 
+                                if (direccion && !esLateralizado(velasOTC)) {
+                                    console.log(`[🚫 TENDENCIA] ${assetName} está en tendencia fuerte. Ignorando para buscar mercado lateralizado.`);
+                                    direccion = null;
+                                }
+
                                 if (direccion) {
                                     const currentSeconds = new Date().getSeconds();
                                     if (currentSeconds < 58) {
@@ -489,6 +528,22 @@ io.on('connection', (socket) => {
                                                 tradeStatus.result = isLoss ? 'PERDIDA' : 'GANADA';
                                                 tradeStatus.color = isLoss ? 'text-red-400' : 'text-green-400';
                                                 tradeStatus.winner = !isLoss;
+                                                
+                                                // Actualizar balance simulado local y emitirlo
+                                                const sess = userSessions.get(uid);
+                                                if (sess && sess.balances) {
+                                                    const bal = sess.balances;
+                                                    if (isLoss) {
+                                                        if (account === 'demo') bal.demo -= amount;
+                                                        else bal.real -= amount;
+                                                    } else {
+                                                        const profit = amount * 0.85; // Aprox ganancia binaria
+                                                        if (account === 'demo') bal.demo += profit;
+                                                        else bal.real += profit;
+                                                    }
+                                                    socket.emit('balance_sync', { demo: bal.demo.toFixed(2), real: bal.real.toFixed(2) });
+                                                }
+
                                                 if (isLoss) {
                                                     losses++;
                                                     tradeLocks.set(`${currentAsset}_cd`, Date.now() + 180000);
