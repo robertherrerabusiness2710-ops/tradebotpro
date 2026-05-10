@@ -141,17 +141,8 @@ io.on('connection', (socket) => {
                     console.log(`[MAP] Datos crudos guardados en ${rawPath}`);
 
                     const TARGETS = [
-                        // Principales (faltaban en la lista original)
-                        'bitcoin', 'btc', 'ethereum', 'eth', 'litecoin', 'ltc',
-                        'dogecoin', 'doge', 'bnb', 'tron', 'trx',
-                        'polygon', 'matic', 'shiba', 'shib', 'stellar', 'xlm',
-                        'uniswap', 'uni', 'toncoin', 'ton',
-                        // Altcoins originales
-                        'jupiter', 'floki', 'pepe', 'bonk', 'sei',
-                        'ripple', 'xrp', 'chainlink', 'link', 'polkadot', 'dot',
-                        'near', 'cosmos', 'atom', 'render', 'rndr', 'graph', 'grt',
-                        'dydx', 'stacks', 'stx', 'hbar', 'hedera', 'solana', 'sol',
-                        'avalanche', 'avax', 'cardano', 'ada'
+                        'otc', 'fr 40', 'ger 30', 'hk 33', 'us 500', 'amazon',
+                        'bitcoin', 'btc', 'ethereum', 'eth', 'litecoin', 'ltc', 'ripple', 'xrp'
                     ];
 
                     // Limpiar lista negra de divisas
@@ -161,8 +152,11 @@ io.on('connection', (socket) => {
                         if (!id || !name) return;
                         const n = name.toLowerCase();
                         
-                        // Prevención de activos corruptos
-                        if (n.includes('-op')) return;
+                        // Prevención de activos corruptos y divisas estándar no OTC (front.*)
+                        if (n.includes('front.') || n.includes('-op') || n.includes('usd')) {
+                            // Solo permitir OTC o indices puros
+                            if (!n.includes('otc')) return;
+                        }
                         
                         const isForbidden = FORBIDDEN.some(f => n.includes(f));
                         if (isForbidden) return;
@@ -204,14 +198,8 @@ io.on('connection', (socket) => {
                     try {
                         const js = JSON.parse(message.toString());
                         const TARGETS_VIVOS = [
-                            // Principales
-                            'bitcoin','btc','ethereum','eth','litecoin','ltc',
-                            'dogecoin','doge','bnb','tron','polygon','matic',
-                            'shiba','stellar','xlm','uniswap','uni','ton','xrp','sol','ada',
-                            // Altcoins
-                            'jupiter','floki','pepe','bonk','sei','ripple','chainlink',
-                            'polkadot','near','cosmos','render','graph','dydx','stacks',
-                            'hbar','solana','avalanche','cardano'
+                            'otc', 'fr 40', 'ger 30', 'hk 33', 'us 500', 'amazon',
+                            'bitcoin', 'btc', 'ethereum', 'eth', 'litecoin', 'ltc', 'ripple', 'xrp'
                         ];
                         const FORBIDDEN_VIVOS = ['eur/','gbp/','usd/cad','usd/jpy'];
 
@@ -223,8 +211,10 @@ io.on('connection', (socket) => {
                             const id = inst.active_id || inst.id;
                             if (!n || !id) return;
                             
-                            // Ignorar corruptos de metadatos
-                            if (n.includes('-op')) return;
+                            // Ignorar corruptos y divisas estándar no OTC
+                            if (n.includes('front.') || n.includes('-op') || n.includes('usd')) {
+                                if (!n.includes('otc')) return;
+                            }
                             
                             if (FORBIDDEN_VIVOS.some(f => n.includes(f))) return;
                             
@@ -265,13 +255,13 @@ io.on('connection', (socket) => {
                     if (ACTIVOS_A_ESCANEAR.length === 0) {
                         console.log(`[BOT WARNING] Usando mapa de criptos de respaldo...`);
                         const fallbackActivos = [
-                            { id: 816, name: 'Bitcoin' },
-                            { id: 817, name: 'Ethereum' },
-                            { id: 845, name: 'Litecoin' },
-                            { id: 1072, name: 'Ripple' },
-                            { id: 1073, name: 'Solana' },
-                            { id: 844, name: 'EOS' },
-                            { id: 847, name: 'Bitcoin Cash' }
+                            { id: 816, name: 'Bitcoin (OTC)' },
+                            { id: 817, name: 'Ethereum (OTC)' },
+                            { id: 1072, name: 'Ripple (OTC)' },
+                            { id: 1073, name: 'Solana (OTC)' },
+                            { id: 100000, name: 'US 500' }, // ID ficticio para indices, solo para fallback
+                            { id: 100001, name: 'Amazon' },
+                            { id: 100002, name: 'FR 40' }
                         ];
                         fallbackActivos.forEach(act => {
                             knownMarkets.set(act.id, act.name);
