@@ -497,7 +497,15 @@ io.on('connection', (socket) => {
                                             currentAsset, side, iqOptionExpired(1), balanceId, 0, amount
                                         );
                                         
-                                        const entryPrice = order?.price || order?.entry_price || ultimaVela.close;
+                                        // Extraer el precio REAL de mercado al inicio de la vela
+                                        let entryPrice = ultimaVela.close;
+                                        try {
+                                            const postVelas = await api.getCandles(currentAsset, 60, 1, Date.now());
+                                            if (postVelas && postVelas.length > 0) {
+                                                entryPrice = postVelas[postVelas.length - 1].open;
+                                            }
+                                        } catch (e) { /* fallback a ultimaVela.close */ }
+                                        
                                         const tradeStatus = {
                                             id: Date.now(),
                                             asset: assetName,
