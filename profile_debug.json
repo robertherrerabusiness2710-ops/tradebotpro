@@ -1,0 +1,211 @@
+{
+  "account_status": "NONE",
+  "address": "Mariara, Urb. Los Chaguaramos",
+  "auth_two_factor": null,
+  "avatar": "",
+  "balance": 0,
+  "balance_id": 96048701,
+  "balance_type": 0,
+  "balances": [
+    {
+      "id": 96048701,
+      "user_id": 36276946,
+      "type": 1,
+      "amount": 0,
+      "enrolled_amount": 0,
+      "enrolled_sum_amount": 0,
+      "bonus_amount": 0,
+      "hold_amount": 0,
+      "orders_amount": 0,
+      "currency": "USD",
+      "tournament_id": null,
+      "tournament_name": null,
+      "is_fiat": true,
+      "is_marginal": false,
+      "has_deposits": true,
+      "auth_amount": 0,
+      "equivalent": 0
+    },
+    {
+      "id": 96048702,
+      "user_id": 36276946,
+      "type": 4,
+      "amount": 15667.87,
+      "enrolled_amount": 15667.87,
+      "enrolled_sum_amount": 15667.87,
+      "bonus_amount": 0,
+      "hold_amount": 0,
+      "orders_amount": 0,
+      "currency": "USD",
+      "tournament_id": null,
+      "tournament_name": null,
+      "is_fiat": true,
+      "is_marginal": false,
+      "has_deposits": false,
+      "auth_amount": 0,
+      "equivalent": 0
+    },
+    {
+      "id": 96048703,
+      "user_id": 36276946,
+      "type": 5,
+      "amount": 0,
+      "enrolled_amount": 0,
+      "enrolled_sum_amount": 0,
+      "bonus_amount": 0,
+      "hold_amount": 0,
+      "orders_amount": 0,
+      "currency": "BTC",
+      "tournament_id": null,
+      "tournament_name": null,
+      "is_fiat": false,
+      "is_marginal": false,
+      "has_deposits": false,
+      "auth_amount": 0,
+      "equivalent": 0
+    },
+    {
+      "id": 96048704,
+      "user_id": 36276946,
+      "type": 5,
+      "amount": 0,
+      "enrolled_amount": 0,
+      "enrolled_sum_amount": 0,
+      "bonus_amount": 0,
+      "hold_amount": 0,
+      "orders_amount": 0,
+      "currency": "ETH",
+      "tournament_id": null,
+      "tournament_name": null,
+      "is_fiat": false,
+      "is_marginal": false,
+      "has_deposits": false,
+      "auth_amount": 0,
+      "equivalent": 0
+    }
+  ],
+  "birthdate": 1004169600,
+  "bonus_total_wager": 0,
+  "bonus_wager": 0,
+  "cashback_level_info": {
+    "enabled": false
+  },
+  "city": "Mariara",
+  "client_category_id": 1,
+  "company_id": 2,
+  "confirmation_required": 0,
+  "confirmed_phones": [
+    "58 *****90109"
+  ],
+  "country_id": 211,
+  "created": 1526488543,
+  "currency": "USD",
+  "currency_char": "$",
+  "currency_id": 5,
+  "demo": 0,
+  "deposit_count": 10,
+  "deposit_in_one_click": false,
+  "email": "robertico200127.rh@gmail.com",
+  "finance_state": "",
+  "first_name": "Robert",
+  "flag": "VE",
+  "forget_status": {
+    "status": "none",
+    "created": null,
+    "expires": null
+  },
+  "functions": {
+    "popup_ids": {
+      "0": "1"
+    },
+    "ext_fields": {},
+    "is_vip_mode": 0,
+    "is_bonus_block": 0,
+    "is_no_currency_change": 0,
+    "is_trading_bonus_block": 0
+  },
+  "gender": "male",
+  "group_id": 191,
+  "id": 36276946,
+  "infeed": 1,
+  "is_activated": true,
+  "is_islamic": false,
+  "is_vip_group": false,
+  "kyc": {
+    "status": 1,
+    "isPhoneFilled": false,
+    "isPhoneNeeded": false,
+    "isProfileFilled": false,
+    "isProfileNeeded": false,
+    "isRegulatedUser": false,
+    "daysLeftToVerify": -1,
+    "isPhoneConfirmed": false,
+    "isDocumentsNeeded": false,
+    "isDocumentsApproved": false,
+    "isDocumentsDeclined": false,
+    "isDocumentsUploaded": false,
+    "isDocumentPoaUploaded": false,
+    "isDocumentPoiUploaded": false,
+    "isDocumentsUploadSkipped": false,
+    "isPhoneConfirmationSkipped": false
+  },
+  "kyc_confirmed": false,
+  "last_name": "Herrera",
+  "last_visit": false,
+  "locale": "es_ES",
+  "mask": "$ %s",
+  "messages": 0,
+  "money": {
+    "deposit": {
+      "min": 0,
+      "max": 0
+    },
+    "withdraw": {
+      "min": 0,
+      "max": 0
+    }
+  },
+  "name": "Robert Herrera",
+  "nationality": "Venezuela",
+  "need_phone_confirmation": false,
+  "new_email": "",
+  "nickname": "Jace Evans",
+  "personal_data_policy": {
+    "is_call_accepted": {
+      "status": true
+    },
+    "is_push_accepted": {
+      "status": true
+    },
+    "is_email_accepted": {
+      "status": true
+    },
+    "is_agreement_accepted": {
+      "status": true
+    },
+    "is_thirdparty_accepted": {
+      "status": true
+    }
+  },
+  "phone": "58 *****90109",
+  "popup": [],
+  "postal_index": "2001",
+  "public": 1,
+  "rate_in_one_click": false,
+  "site_id": 1,
+  "skey": "5f96057ad4224d8be34aea81cbee3191",
+  "socials": {},
+  "ssid": false,
+  "tc": true,
+  "timediff": -25200,
+  "tin": "",
+  "tournaments_ids": null,
+  "trade_restricted": false,
+  "trial": false,
+  "tz": "America/Caracas",
+  "tz_offset": -240,
+  "user_circle": "No exp",
+  "user_group": "Asia_Default",
+  "user_id": 36276946,
+  "welcome_splash": 0
+}

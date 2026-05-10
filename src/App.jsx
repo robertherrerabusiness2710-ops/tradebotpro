@@ -1,360 +1,822 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
-  Play, 
-  Square, 
-  Activity, 
-  BarChart2, 
-  Settings, 
-  TrendingUp, 
-  AlertCircle,
-  CheckCircle2,
-  RefreshCw,
-  Zap,
-  DollarSign,
-  Wallet,
-  Globe,
-  LogIn,
-  LogOut,
-  User,
-  ShieldCheck,
-  Mail,
-  Lock,
-  UserPlus,
-  Eye,
-  EyeOff,
-  History,
-  TrendingDown,
-  Database,
-  Search,
-  Server
+  Activity, Settings, Play, Database, Shield, Zap, 
+  TrendingUp, RefreshCw, LogOut, CheckCircle2, AlertCircle,
+  Globe, Server, User, Key, Mail, Cpu, Clock, DollarSign
 } from 'lucide-react';
 import { io } from 'socket.io-client';
-import { 
-  auth, 
-  db, 
-  signInWithEmailAndPassword, 
-  createUserWithEmailAndPassword 
-} from './lib/firebase';
-import { onAuthStateChanged, signOut } from 'firebase/auth';
-import { doc, setDoc, getDoc, collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { auth, db } from './lib/firebase';
+import { onAuthStateChanged, signOut, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
+import { collection, addDoc, onSnapshot, query, orderBy, limit, serverTimestamp } from 'firebase/firestore';
+
+// ==========================================
+// CONFIGURACIÓN DE NÚCLEO (BLINDAJE v6.2)
+// ==========================================
 
 const App = () => {
-  // CONFIGURACIONES BASICAS
   const [user, setUser] = useState(null);
-  const [authMode, setAuthMode] = useState('login'); 
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
-  const [showIqPass, setShowIqPass] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
-  
-  const [activeTab, setActiveTab] = useState('dashboard');
-  const [balances, setBalances] = useState({ demo: '0.00', real: '0.00' });
-  const [livePrice, setLivePrice] = useState({ pair: 'EUR/USD', price: '1.08542', timestamp: '--' });
-  const [iqConnected, setIqConnected] = useState(false);
+  const [activeTab, setActiveTab] = useState('panel');
+  const [gatewayUrl, setGatewayUrl] = useState(
+    localStorage.getItem('trade_gateway') || 
+    import.meta.env.VITE_GATEWAY_URL || 
+    ''
+  );
+  const [balances, setBalances] = useState({ real: '0.00', demo: '0.00' });
   const [logs, setLogs] = useState([]);
+  const [socketStatus, setSocketStatus] = useState('offline');
   const [isLinking, setIsLinking] = useState(false);
+  const [successMsg, setSuccessMsg] = useState('');
   
-  // OPCIONES DE GATEWAY
-  const [gatewayUrl, setGatewayUrl] = useState(localStorage.getItem('tradebot_gateway') || 'https://robert2710-robert-tradebot.hf.space');
-  const [backtestResult, setBacktestResult] = useState({ pair: '', rate: 0, signals: 0 });
-  const [isBacktesting, setIsBacktesting] = useState(false);
-  const [selectedAsset, setSelectedAsset] = useState('EURUSD-OTC');
-
-  // REFS PARA EVITAR PANTALLA BLANCA (BLINDAJE TOTAL)
+  // ESTADOS DE ESTRATEGIA (RSI + CCI)
+  const [isTesting, setIsTesting] = useState(false);
+  const [testResults, setTestResults] = useState(null);
+  const [backtestConfig, setBacktestConfig] = useState({ account: 'demo', amount: 10, cycles: 10 });
+  const [backtestPhase, setBacktestPhase] = useState('');
+  const [scanTelemetry, setScanTelemetry] = useState([]);
+  const [tradeHistory, setTradeHistory] = useState(JSON.parse(localStorage.getItem('trade_history') || '[]'));
+  const [multiPrices, setMultiPrices] = useState([]);
+  const [historyFilter, setHistoryFilter] = useState('all');
+  const [cycleReport, setCycleReport] = useState(null);
+  const [liveTrades, setLiveTrades] = useState([]);
+  
+  // REFS PARA PERSISTENCIA (SIN PANTALLA BLANCA)
   const socketRef = useRef(null);
   const iqEmailRef = useRef(null);
   const iqPassRef = useRef(null);
   const gatewayInputRef = useRef(null);
+  
+  // FIX: Ref approach for backtestConfig to prevent old closure bugs
+  const backtestConfigRef = useRef(backtestConfig);
+  useEffect(() => { backtestConfigRef.current = backtestConfig; }, [backtestConfig]);
 
-  const addLog = async (msg) => {
-    const time = new Date().toLocaleTimeString();
-    setLogs(prev => [{ time, msg: String(msg) }, ...prev].slice(0, 15));
-    if (user) {
-        try {
-            await addDoc(collection(db, `users/${user.uid}/logs`), { msg: String(msg), time: serverTimestamp() });
-        } catch (e) { console.error("Log error", e); }
-    }
-  };
-
-  const loadUserConfig = async (currentUser) => {
-    if (!currentUser || !socketRef.current?.connected) return;
-    try {
-        const docSnap = await getDoc(doc(db, "users", currentUser.uid));
-        if (docSnap.exists()) {
-            const config = docSnap.data();
-            if (config.iqEmail && config.iqPassword) {
-                addLog("⏳ Re-vinculando Broker...");
-                setIsLinking(true);
-                socketRef.current.emit('connect_iq', { 
-                    uid: currentUser.uid, 
-                    email: config.iqEmail, 
-                    password: config.iqPassword, 
-                    mode: 'PRACTICE' 
-                });
-            }
-        }
-    } catch (e) { console.error("Config error:", e); }
-  };
-
+  // 1. GESTIÓN DE AUTENTICACIÓN FIREBASE
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (u) => {
-      if (u) {
-        setUser(u);
-        addLog(`Usuario ${u.email} activo.`);
-        if (socketRef.current?.connected) loadUserConfig(u);
-      } else {
-        setUser(null);
-      }
-    });
+    const unsub = onAuthStateChanged(auth, (u) => setUser(u));
+    return () => unsub();
+  }, []);
 
-    // CONEXION AL GATEWAY
-    const cleanUrl = gatewayUrl.replace(/\/$/, "");
+  const addLog = React.useCallback(async (text) => {
+    if (!user) return;
+    await addDoc(collection(db, `logs_${user.uid}`), {
+      text,
+      time: new Date().toLocaleTimeString(),
+      createdAt: serverTimestamp(),
+      type: text.includes('✅') ? 'success' : text.includes('❌') ? 'error' : 'info'
+    });
+  }, [user]);
+
+  // 2. CONEXIÓN SOCKET DINÁMICA
+  useEffect(() => {
+    if (!user || !gatewayUrl) return;
+
     if (socketRef.current) socketRef.current.disconnect();
 
-    socketRef.current = io(cleanUrl, {
+    try {
+      socketRef.current = io(gatewayUrl, { 
+        transports: ['websocket'], 
         reconnection: true,
-        reconnectionAttempts: 10,
-        transports: ['websocket', 'polling'],
-        timeout: 10000
-    });
+        path: '/socket.io'
+      });
 
-    socketRef.current.on('connect', () => {
-        addLog(`📶 Enlace Activo: ${cleanUrl}`);
-        if (auth.currentUser) {
-            socketRef.current.emit('auth_link', auth.currentUser.uid);
-            loadUserConfig(auth.currentUser);
+      socketRef.current.on('connect', () => {
+        setSocketStatus('online');
+        addLog("📶 Enlace Activo: " + gatewayUrl);
+        socketRef.current.emit('auth_link', user.uid);
+      });
+
+      socketRef.current.on('disconnect', () => setSocketStatus('offline'));
+      
+      socketRef.current.on('balance_sync', (data) => {
+        setBalances(data);
+      });
+
+      socketRef.current.on('iq_connected', (data) => {
+        addLog(`✅ Broker conectado como: ${data.name}`);
+        setIsLinking(false);
+        setSuccessMsg("¡VINCULACION EXITOSA! 🎉");
+        setTimeout(() => setSuccessMsg(''), 5000);
+      });
+
+      socketRef.current.on('iq_error', (data) => {
+        addLog(`❌ Error IQ: ${data.msg}`);
+        setIsLinking(false);
+      });
+
+      socketRef.current.on('scan_telemetry', (data) => {
+        // Merge new data with existing - never remove coins already shown
+        setScanTelemetry(prev => {
+          const existing = new Map(prev.map(item => [item.asset, item]));
+          (data.results || []).forEach(item => existing.set(item.asset, item));
+          return Array.from(existing.values());
+        });
+      });
+
+      socketRef.current.on('scan_init', (data) => {
+        // Inicializar barras con TODOS los activos al empezar
+        if (data.assets && data.assets.length > 0) {
+          setScanTelemetry(data.assets);
         }
-    });
+      });
 
-    socketRef.current.on('connect_error', () => {
-        addLog(`⚠️ Esperando a la nube... (Sin conexión)`);
-    });
+      socketRef.current.on('price_multi_update', (data) => {
+        setMultiPrices(data.prices);
+      });
 
-    socketRef.current.on('price_update', (data) => setLivePrice(data));
-    socketRef.current.on('balance_sync', (data) => setBalances(data));
-    socketRef.current.on('iq_connected', (profile) => {
-      setIqConnected(true);
-      setIsLinking(false);
-      addLog(`✅ Broker conectado como: ${profile.name}`);
-    });
-    
-    socketRef.current.on('iq_error', (data) => {
-      setIsLinking(false);
-      addLog(`❌ Error IQ: ${data.msg}`);
-    });
+      socketRef.current.on('trade_executed', (data) => {
+        setTradeHistory(prev => {
+          const updated = [data, ...prev].slice(0, 50);
+          localStorage.setItem('trade_history', JSON.stringify(updated));
+          return updated;
+        });
+        addLog(`🎯 DISPARO REALIZADO: ${data.asset} (${data.side})`);
+      });
 
-    socketRef.current.on('backtest_result', (data) => {
-        setIsBacktesting(false);
-        setBacktestResult({ pair: data.pair, rate: data.rate, signals: data.totalSignals });
-        addLog(`🧪 Backtest Finalizado: ${data.pair} -> ${data.rate}%`);
-    });
+      socketRef.current.on('live_trade_result', (data) => {
+        // Agregar hora actual al resultado
+        const withTime = { ...data, displayTime: new Date().toLocaleTimeString() };
+        setLiveTrades(prev => [withTime, ...prev].slice(0, 10));
+        addLog(`${data.winner ? '✅ GANADA' : '❌ PERDIDA'}: ${data.asset}`);
+      });
 
-    socketRef.current.on('signal', (data) => {
-        addLog(`🔥 SEÑAL: ${data.type} en ${data.pair}`);
-    });
+      socketRef.current.on('live_bot_update', (data) => {
+        setBacktestPhase(data.phase);
+        if (data.w !== undefined) {
+          const currentConfig = backtestConfigRef.current;
+          setTestResults({ 
+            wins: data.w, 
+            losses: data.l, 
+            total: data.trades, 
+            profit: (data.w * currentConfig.amount * 0.85) - (data.l * currentConfig.amount) 
+          });
+        }
+      });
+
+      socketRef.current.on('live_bot_finished', (data) => {
+        setIsTesting(false);
+        setBacktestPhase('');
+        if (data.report) setCycleReport(data.report);
+
+        // Calcular resultados finales del ciclo
+        const currentConfig = backtestConfigRef.current;
+        const winCount = data.w || 0;
+        const lossCount = data.l || 0;
+        const totalTrades = data.trades || 0;
+        const winRate = totalTrades > 0 ? ((winCount / totalTrades) * 100).toFixed(1) : '0.0';
+        const profitPerWin = currentConfig.amount * 0.85;
+        const netProfit = (winCount * profitPerWin) - (lossCount * currentConfig.amount);
+
+        setTestResults({
+          trades: totalTrades,
+          wins: winCount,
+          losses: lossCount,
+          winRate: parseFloat(winRate),
+          profit: netProfit >= 0 ? `+ $${netProfit.toFixed(2)}` : `- $${Math.abs(netProfit).toFixed(2)}`,
+          isPositive: netProfit >= 0,
+          amountUsed: currentConfig.amount,
+          accountUsed: currentConfig.account.toUpperCase()
+        });
+      });
+    } catch {
+      addLog("❌ Error: Gateway inalcanzable");
+    }
 
     return () => {
-      unsubscribe();
       if (socketRef.current) socketRef.current.disconnect();
     };
-  }, [gatewayUrl]);
+  }, [user, gatewayUrl, addLog]);
 
-  const runBacktest = (e) => {
-      if(e) e.preventDefault();
-      if (!user || !socketRef.current?.connected) {
-          addLog("❌ Error: Gateway no conectado");
-          return;
-      }
-      setIsBacktesting(true);
-      addLog(`🔎 Escaneando ${selectedAsset}...`);
-      socketRef.current.emit('run_backtest', { uid: user.uid, pair: selectedAsset });
-  };
+  // 3. RECUPERACIÓN DE LOGS HISTÓRICOS
+  useEffect(() => {
+    if (!user) return;
+    const q = query(collection(db, `logs_${user.uid}`), orderBy('createdAt', 'desc'), limit(15));
+    const unsub = onSnapshot(q, (snap) => {
+      setLogs(snap.docs.map(doc => doc.data()));
+    });
+    return () => unsub();
+  }, [user]);
 
-  const handleAuth = async (e) => {
-    e.preventDefault();
-    setIsLoading(true);
-    try {
-      if (authMode === 'login') await signInWithEmailAndPassword(auth, email, password);
-      else await createUserWithEmailAndPassword(auth, email, password);
-    } catch (err) { addLog("❌ Error en autenticación"); } finally { setIsLoading(false); }
-  };
+  // addLog was hoisted up to avoid ESLint warnings and early access
 
-  const updateGateway = (e) => {
-      if(e) e.preventDefault();
-      const url = gatewayInputRef.current?.value;
-      if(!url) return;
-      localStorage.setItem('tradebot_gateway', url);
-      setGatewayUrl(url);
-      addLog(`🔄 Gateway -> ${url}`);
-      window.location.reload(); 
-  };
-
-  const handleIqLink = async (e) => {
-    // PROTECCION TOTAL ANTI-CRASH
-    if(e) e.preventDefault();
-    const iqEmail = iqEmailRef.current?.value;
-    const iqPass = iqPassRef.current?.value;
-    
-    if(!iqEmail || !iqPass) return;
-    
-    setIsLinking(true);
-    addLog("⏳ Vinculando...");
-    
-    try {
-        await setDoc(doc(db, "users", user.uid), { iqEmail, iqPassword: iqPass }, { merge: true });
-        if(socketRef.current?.connected) {
-            socketRef.current.emit('connect_iq', { uid: user.uid, email: iqEmail, password: iqPass, mode: 'PRACTICE' });
-        } else {
-            addLog("❌ Error: Socket offline");
-            setIsLinking(false);
-        }
-    } catch (err) { 
-        setIsLinking(false); 
-        addLog("❌ Error Firestore"); 
+  const updateGateway = () => {
+    const newUrl = gatewayInputRef.current?.value;
+    if (newUrl) {
+      localStorage.setItem('trade_gateway', newUrl);
+      setGatewayUrl(newUrl);
+      setSuccessMsg("¡ENLACE NUBE GUARDADO! ✅");
+      setTimeout(() => setSuccessMsg(''), 3000);
     }
   };
 
-  if (!user) {
-    return (
-      <div className="min-h-screen bg-slate-950 flex items-center justify-center p-6">
-        <div className="max-w-md w-full bg-slate-900 border border-slate-800 rounded-3xl p-10 shadow-2xl relative">
-            <h1 className="text-3xl font-black text-white mb-8 text-center uppercase tracking-tighter">TradeBot PRO</h1>
-            <form onSubmit={handleAuth} className="space-y-4">
-               <input type="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} required className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-6 py-4 text-white focus:outline-none focus:border-blue-500 font-mono text-sm" />
-               <input type={showPassword ? "text" : "password"} placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)} required className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-6 py-4 text-white focus:outline-none focus:border-blue-500 font-mono text-sm" />
-               <button type="submit" disabled={isLoading} className="w-full bg-blue-600 font-black py-4 rounded-2xl text-white uppercase text-xs hover:bg-blue-500 transition-all">{isLoading ? 'Cargando...' : 'Entrar'}</button>
-            </form>
-            <button onClick={() => setAuthMode('register')} className="w-full mt-6 text-slate-500 text-[10px] font-black uppercase text-center">Registrar</button>
+  const handleBrokerConnect = (e) => {
+    e.preventDefault();
+    if (!socketRef.current) return addLog("❌ Error: Socket offline");
+
+    const email = iqEmailRef.current?.value;
+    const pass = iqPassRef.current?.value;
+
+    if (!email || !pass) return alert("Por favor completa los datos de IQ Option");
+
+    localStorage.setItem('iq_email', email);
+    localStorage.setItem('iq_pass', pass);
+
+    setIsLinking(true);
+    setSuccessMsg("⏳ SINCRONIZANDO CON EL CORREDOR...");
+    
+    socketRef.current.emit('connect_iq', {
+      uid: user.uid,
+      email: email,
+      password: pass
+    });
+  };
+
+  const handleLogin = async () => {
+    const provider = new GoogleAuthProvider();
+    try {
+      await signInWithPopup(auth, provider);
+    } catch (error) {
+      console.error("Login Error:", error);
+    }
+  };
+
+  const runBacktest = () => {
+    if(!backtestConfig.amount || backtestConfig.amount < 1) return alert("Ingresa un monto válido");
+    
+    setIsTesting(true);
+    setTestResults(null);
+    setBacktestPhase('Conectando a Motor de Operaciones en Vivo...');
+
+    if (socketRef.current) {
+        socketRef.current.emit('start_live_bot', { 
+            account: backtestConfig.account, 
+            amount: backtestConfig.amount,
+            cycles: backtestConfig.cycles
+        });
+    } else {
+        alert("El motor no está conectado. Reinicia el enlace.");
+        setIsTesting(false);
+    }
+  };
+  
+
+  // NOTE: Los eventos live_bot_update y live_bot_finished ya están registrados
+  // en el useEffect principal de conexión (líneas 112-129). No se duplican aquí.
+
+
+  if (!user) return (
+    <div className="min-h-screen bg-[#080b13] flex items-center justify-center p-4">
+      <div className="w-full max-w-md bg-[#0d121f]/80 backdrop-blur-xl border border-blue-500/20 rounded-3xl p-8 shadow-2xl text-center">
+        <div className="flex items-center justify-center gap-3 mb-8">
+          <Activity className="w-10 h-10 text-blue-500" />
+          <h1 className="text-3xl font-black text-white tracking-tighter italic">TRADEBOT PRO</h1>
         </div>
+        <p className="text-gray-400 mb-8 text-sm">Bienvenido Robert, ingresa a tu terminal de trading en la nube.</p>
+        <button 
+          onClick={handleLogin}
+          className="w-full bg-blue-600 text-white font-bold py-4 rounded-2xl flex items-center justify-center gap-3 hover:bg-blue-500 transition-all transform active:scale-95 shadow-lg shadow-blue-500/20"
+        >
+          <User className="w-5 h-5" /> Iniciar con Google Cloud
+        </button>
       </div>
-    );
-  }
+    </div>
+  );
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-200 flex flex-col md:flex-row">
-      <aside className="w-full md:w-80 bg-slate-900 border-r border-slate-800 flex flex-col p-8 lg:h-screen lg:sticky lg:top-0">
-        <div className="flex items-center gap-3 mb-10">
-            <Activity className="w-8 h-8 text-blue-500" />
-            <span className="text-xl font-black text-white uppercase tracking-tighter">TradeBot PRO</span>
+    <div className="min-h-screen bg-[#080b13] text-gray-200 font-sans">
+      
+      {successMsg && (
+        <div className="fixed top-5 left-1/2 -translate-x-1/2 z-[999] bg-green-500 text-white px-8 py-4 rounded-full font-black shadow-2xl flex items-center gap-3 animate-bounce border-2 border-white/20">
+          <CheckCircle2 className="w-6 h-6" /> {successMsg}
         </div>
-        <nav className="flex-1 space-y-2">
-            {['dashboard', 'strategies', 'settings'].map(tab => (
-                <button key={tab} type="button" onClick={() => setActiveTab(tab)} className={`w-full flex items-center px-4 py-4 rounded-2xl transition-all font-black text-xs uppercase ${activeTab === tab ? 'bg-blue-600 text-white shadow-xl' : 'text-slate-500 hover:bg-slate-800 hover:text-white'}`}>
-                  {tab}
-                </button>
-            ))}
+      )}
+
+      <aside className="fixed left-0 top-0 h-full w-20 md:w-64 bg-[#0d121f] border-r border-blue-500/10 flex flex-col z-50">
+        <div className="p-6 flex items-center gap-3">
+          <Activity className="w-6 h-6 text-blue-500" />
+          <span className="hidden md:block font-black text-white tracking-tighter italic text-xl uppercase">TradeBot Pro</span>
+        </div>
+
+        <nav className="flex-1 px-4 mt-6 space-y-2">
+          {[
+            { id: 'panel', icon: Database, label: 'DASHBOARD' },
+            { id: 'estrategias', icon: Zap, label: 'STRATEGIES' },
+            { id: 'ajustes', icon: Settings, label: 'SETTINGS' },
+          ].map((item) => (
+            <button
+              key={item.id}
+              onClick={() => setActiveTab(item.id)}
+              className={`w-full flex items-center gap-4 p-4 rounded-2xl transition-all ${
+                activeTab === item.id 
+                ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/30' 
+                : 'hover:bg-blue-500/5 text-gray-500'
+              }`}
+            >
+              <item.icon className="w-6 h-6" />
+              <span className="hidden md:block font-bold text-xs tracking-widest">{item.label}</span>
+            </button>
+          ))}
         </nav>
-        <button onClick={() => signOut(auth)} className="w-full py-3 bg-rose-600/10 text-rose-500 rounded-xl font-black text-[10px] uppercase">Cerrar Sesión</button>
+
+        <div className="p-6 border-t border-white/5">
+          <button 
+            onClick={() => signOut(auth)}
+            className="w-full flex items-center gap-4 p-4 rounded-2xl text-red-500 hover:bg-red-500/10 transition-all font-bold text-xs"
+          >
+            <LogOut className="w-6 h-6" />
+            <span className="hidden md:block">LOGOUT</span>
+          </button>
+          <div className="mt-4 text-[9px] text-gray-600 font-mono text-center tracking-tighter uppercase">SYSTEM v6.2 - ROBERT EDITION</div>
+        </div>
       </aside>
 
-      <main className="flex-1 p-8 md:p-12 overflow-y-auto overflow-x-hidden">
-        <header className="mb-10 flex flex-col md:flex-row md:items-end justify-between gap-6">
-            <div>
-                <h1 className="text-5xl font-black text-white uppercase tracking-tighter mb-2">
-                   {activeTab === 'dashboard' ? 'En Vivo' : activeTab === 'strategies' ? 'IA Engine' : 'Ajustes'}
-                </h1>
-                <div className="flex items-center gap-2">
-                    <div className={`w-2 h-2 rounded-full ${socketRef.current?.connected ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`}></div>
-                    <p className="text-slate-500 font-bold uppercase text-[9px] tracking-widest font-mono">Gateway: {socketRef.current?.connected ? 'Linked' : 'Offline'}</p>
-                </div>
-            </div>
-            <div className="flex bg-slate-900 border border-slate-800 rounded-2xl px-6 py-4 divide-x divide-slate-800">
-                <div className="pr-6">
-                    <span className="block text-[8px] text-slate-500 uppercase font-black">Real</span>
-                    <span className="text-emerald-500 font-black font-mono">$ {balances.real}</span>
-                </div>
-                <div className="pl-6">
-                    <span className="block text-[8px] text-slate-500 uppercase font-black">Demo</span>
-                    <span className="text-amber-500 font-black font-mono">$ {balances.demo}</span>
-                </div>
-            </div>
-        </header>
-
-        {activeTab === 'dashboard' && (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 animate-in fade-in duration-500">
-              <div className="bg-slate-900 border border-slate-800 p-10 rounded-[2rem] shadow-2xl relative overflow-hidden bg-gradient-to-br from-slate-900 to-slate-950">
-                  <span className="inline-flex items-center gap-2 px-3 py-1 bg-blue-500/10 text-blue-500 text-[10px] font-black uppercase rounded-lg border border-blue-500/20 mb-6">Live Price Cloud</span>
-                  <h2 className="text-7xl font-black text-white tracking-tighter mb-2 font-mono">{livePrice.price}</h2>
-                  <p className="text-slate-500 font-black uppercase text-xs">{livePrice.pair}</p>
-              </div>
-
-              <div className="bg-slate-900 border border-slate-800 p-8 rounded-[2rem] shadow-xl flex flex-col bg-gradient-to-b from-slate-900 to-slate-950">
-                  <h3 className="text-white font-black text-[10px] uppercase mb-6 tracking-widest">Monitor Cloud</h3>
-                  <div className="space-y-4 overflow-y-auto max-h-[400px] flex-1 custom-scrollbar">
-                      {logs.map((log, i) => (
-                          <div key={i} className="flex gap-4 border-l-2 border-slate-800 pl-4 py-1">
-                              <span className="text-slate-600 text-[9px]">{log.time}</span>
-                              <span className="text-slate-400 text-[10px]">{log.msg}</span>
-                          </div>
-                      ))}
-                  </div>
-              </div>
+      <main className="pl-20 md:pl-64 min-h-screen">
+        <header className="sticky top-0 bg-[#080b13]/90 backdrop-blur-md p-6 border-b border-white/5 z-40 flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <div className={`w-3 h-3 rounded-full ${socketStatus === 'online' ? 'bg-green-500 shadow-[0_0_10px_#22c55e]' : 'bg-red-500'}`} />
+            <span className="text-[10px] uppercase font-black tracking-widest text-gray-400">
+              GATEWAY: {socketStatus === 'online' ? 'ONLINE' : 'OFFLINE'}
+            </span>
           </div>
-        )}
-        
-        {activeTab === 'strategies' && (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-in zoom-in-95 duration-500">
-             {[1, 2, 3].map(id => (
-                <div key={id} className={`bg-slate-900 border border-slate-800 p-8 rounded-[2rem] shadow-2xl relative overflow-hidden group hover:border-blue-500 transition-all`}>
-                   <h3 className="text-2xl font-black text-white mb-2 uppercase tracking-tighter">{id === 1 ? 'Robert RSI+CCI' : id === 2 ? 'EMA Cross' : 'Price Action'}</h3>
-                   <div className="grid grid-cols-2 gap-3 mb-8">
-                       <div className="bg-slate-950/50 p-4 rounded-3xl text-center">
-                          <span className="text-2xl font-mono font-black text-emerald-500">{id === 1 && backtestResult.rate > 0 ? `${backtestResult.rate}%` : '--'}</span>
-                          <span className="block text-[8px] text-slate-600 uppercase">WinRate</span>
-                       </div>
-                       <div className="bg-slate-950/50 p-4 rounded-3xl text-center">
-                          <span className="text-2xl font-mono font-black text-blue-500">{id === 1 && backtestResult.signals > 0 ? backtestResult.signals : '--'}</span>
-                          <span className="block text-[8px] text-slate-600 uppercase">Signals</span>
-                       </div>
-                   </div>
-                   {id === 1 && (
-                       <select 
-                        value={selectedAsset} 
-                        onChange={(e) => setSelectedAsset(e.target.value)}
-                        className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-5 py-4 text-[10px] font-black text-white outline-none cursor-pointer mb-4"
-                       >
-                          <option value="EURUSD-OTC">EUR/USD (OTC)</option>
-                          <option value="FR40-OTC">FR 40 France (OTC)</option>
-                          <option value="FET-OTC">FET Crypto (OTC)</option>
-                       </select>
-                   )}
-                   <button onClick={runBacktest} disabled={isBacktesting || !iqConnected} className="w-full py-4 bg-slate-800 text-white rounded-2xl text-[11px] font-black uppercase mb-4 active:scale-95 disabled:opacity-20">{isBacktesting ? 'Corriendo...' : 'Backtest'}</button>
-                   <button className="w-full py-5 bg-blue-600 text-white rounded-[1.5rem] text-[12px] font-black uppercase active:scale-95 shadow-xl">Launch Real</button>
-                </div>
-             ))}
-          </div>
-        )}
-        
-        {activeTab === 'settings' && (
-          <div className="max-w-xl animate-in fade-in slide-in-from-right-10 duration-500">
-             <div className="bg-slate-900 border border-slate-800 rounded-[2rem] p-10 shadow-2xl relative overflow-hidden">
-                <h2 className="text-3xl font-black text-white mb-8 uppercase tracking-tighter">Ajustes Cloud</h2>
-                <div className="space-y-6">
-                   <div className="p-6 bg-slate-950/50 border border-blue-500/20 rounded-3xl">
-                       <label className="block text-[10px] font-black text-blue-500 uppercase tracking-widest mb-4">Cloud Gateway</label>
-                       <div className="flex gap-3">
-                          <input type="text" ref={gatewayInputRef} defaultValue={gatewayUrl} className="flex-1 bg-slate-950 border border-slate-800 rounded-2xl px-6 py-4 text-white font-mono text-xs" />
-                          <button onClick={updateGateway} className="px-6 bg-blue-600 text-white rounded-2xl font-black text-[10px] uppercase">Enlazar</button>
-                       </div>
-                   </div>
-                   <div className="space-y-4">
-                       <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">IQ Account</label>
-                       <input type="email" ref={iqEmailRef} placeholder="Email IQ" className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-6 py-4 text-white font-mono text-sm" />
-                       <input type={showIqPass ? "text" : "password"} ref={iqPassRef} placeholder="Password IQ" className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-6 py-4 text-white font-mono text-sm" />
-                       <button onClick={handleIqLink} disabled={isLinking} className="w-full bg-emerald-600 font-black py-5 rounded-2xl text-white uppercase text-xs active:scale-95 shadow-xl disabled:opacity-30">{isLinking ? 'Sincronizando...' : 'Vincular Cloud Broker'}</button>
-                   </div>
-                </div>
+
+          <div className="flex gap-4">
+             <div className="bg-[#0d121f] border border-blue-500/10 rounded-2xl p-4 min-w-[140px]">
+                <div className="text-[8px] text-gray-500 font-bold mb-1 uppercase tracking-widest">REAL ACCOUNT</div>
+                <div className="text-green-400 font-black text-lg">$ {balances.real}</div>
+             </div>
+             <div className="bg-[#0d121f] border border-orange-500/10 rounded-2xl p-4 min-w-[140px]">
+                <div className="text-[8px] text-gray-500 font-bold mb-1 uppercase tracking-widest">DEMO ACCOUNT</div>
+                <div className="text-orange-400 font-black text-lg">$ {balances.demo}</div>
              </div>
           </div>
-        )}
+        </header>
+
+        <div className="p-8">
+          {activeTab === 'panel' && (
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+              <div className="lg:col-span-2 space-y-8">
+                {/* MONITOR CRIPTO (LAS 3 MADRES) */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                   {multiPrices.length > 0 ? multiPrices.map((p, i) => (
+                     <div key={i} className="bg-[#0d121f] border border-blue-500/10 rounded-3xl p-6 hover:border-blue-500/30 transition-all group overflow-hidden relative">
+                        <div className="absolute -right-4 -bottom-4 opacity-5 group-hover:opacity-10 transition-opacity">
+                           {p.pair.includes('BTC') ? <DollarSign className="w-24 h-24 text-orange-400" /> : <Shield className="w-24 h-24 text-blue-400" />}
+                        </div>
+                        <div className="relative z-10">
+                           <div className="text-[10px] font-black text-gray-500 uppercase tracking-widest mb-2 flex items-center gap-2">
+                              <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" /> {p.pair}
+                           </div>
+                           <div className="text-3xl font-black text-white italic tracking-tighter">${p.price}</div>
+                           <div className="text-[9px] text-gray-600 font-bold mt-2 uppercase">{p.timestamp}</div>
+                        </div>
+                     </div>
+                   )) : (
+                     [1,2,3].map(i => (
+                       <div key={i} className="bg-[#0d121f] border border-white/5 rounded-3xl p-6 animate-pulse">
+                          <div className="h-4 bg-white/5 w-20 rounded mb-4" />
+                          <div className="h-8 bg-white/5 w-32 rounded" />
+                       </div>
+                     ))
+                   )}
+                </div>
+
+                {/* HISTORIAL POR ACTIVO */}
+                <div className="bg-[#0d121f] rounded-[40px] border border-white/5 p-8 overflow-hidden flex flex-col h-[500px]">
+                    <div className="flex flex-col md:flex-row justify-between items-center mb-8 gap-4">
+                       <div>
+                          <h3 className="text-2xl font-black text-white italic tracking-tighter uppercase">Historial de Caza</h3>
+                          <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">Ejecuciones en tiempo real</p>
+                       </div>
+                       
+                       <div className="flex gap-2 bg-black/40 p-1.5 rounded-2xl border border-white/5 overflow-x-auto no-scrollbar max-w-full">
+                          {['all', 'Amazon', 'AIG', 'FR 40', 'HK 33', 'SP 35', 'GER 30', 'BTC', 'ETH', 'SOL', 'Pepe', 'Ripple', 'Jupiter', 'Floki'].map(f => (
+                            <button 
+                              key={f}
+                              onClick={() => setHistoryFilter(f)}
+                              className={`px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all shrink-0 ${
+                                historyFilter === f 
+                                ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20' 
+                                : 'text-gray-500 hover:text-white'
+                              }`}
+                            >
+                              {f}
+                            </button>
+                          ))}
+                       </div>
+                    </div>
+
+                    <div className="flex-1 overflow-y-auto space-y-3 pr-2 custom-scrollbar">
+                       {tradeHistory
+                          .filter(t => {
+                            const assetLower = (t.asset || '').toLowerCase();
+                            if (assetLower.includes('eur/') || assetLower.includes('gbp/') || assetLower.includes('/jpy')) return false;
+                            if (historyFilter !== 'all' && !(t.asset || '').includes(historyFilter)) return false;
+                            return true;
+                          }).length === 0 ? (
+                         <div className="h-full flex flex-col items-center justify-center opacity-10">
+                            <Database className="w-16 h-16 mb-4" />
+                            <span className="text-[10px] uppercase font-black tracking-widest">Esperando primeras entradas...</span>
+                         </div>
+                       ) : (
+                         tradeHistory
+                          .filter(t => {
+                            const assetLower = (t.asset || '').toLowerCase();
+                            if (assetLower.includes('eur/') || assetLower.includes('gbp/') || assetLower.includes('/jpy')) return false;
+                            if (historyFilter !== 'all' && !(t.asset || '').includes(historyFilter)) return false;
+                            return true;
+                          })
+                          .map((t, idx) => (
+                           <div key={idx} className="bg-white/5 hover:bg-white/10 p-5 rounded-3xl border border-white/5 flex items-center group transition-all animate-in slide-in-from-left-2">
+                              <div className={`w-2 h-10 rounded-full ${t.side === 'CALL' ? 'bg-green-500 shadow-[0_0_10px_rgba(34,197,94,0.3)]' : 'bg-red-500 shadow-[0_0_10px_rgba(239,68,68,0.3)]'} mr-6`} />
+                              <div className="flex-1">
+                                 <div className="text-xs font-black text-white group-hover:text-blue-400 transition-colors uppercase tracking-tight">{t.asset}</div>
+                                 <div className="text-[9px] text-gray-500 font-bold mt-1 uppercase">
+                                    PRECISIÓN: RSI {t.rsi} | CCI {t.cci}
+                                 </div>
+                              </div>
+                              <div className="text-right">
+                                 <div className={`text-sm font-black italic ${t.side === 'CALL' ? 'text-green-500' : 'text-red-500'}`}>{t.side === 'CALL' ? '↑ COMPRA' : '↓ VENTA'}</div>
+                                 <div className="text-[9px] text-gray-600 font-black mt-1 uppercase">{t.time}</div>
+                              </div>
+                           </div>
+                         ))
+                       )}
+                    </div>
+                </div>
+              </div>
+
+              <div className="bg-[#0d121f] border border-white/5 rounded-[40px] flex flex-col h-[750px]">
+                <div className="p-8 border-b border-white/5 space-y-4">
+                  <h3 className="font-black text-xs tracking-[0.3em] uppercase opacity-50">Monitor Ninja Cloud</h3>
+                  
+                  {/* LIVE TRADES RADAR (NUEVO) */}
+                  <div className="space-y-2">
+                     {liveTrades.length > 0 ? liveTrades.map((t, i) => (
+                       <div key={i} className="bg-white/5 p-3 rounded-2xl border border-white/5 flex items-center justify-between animate-in slide-in-from-top-2">
+                          <div className="flex items-center gap-3">
+                             <div className={`w-1.5 h-6 rounded-full ${t.winner ? 'bg-green-500' : 'bg-red-500'}`} />
+                             <div>
+                               <span className="text-[9px] font-black text-white uppercase block">{t.asset}</span>
+                               <span className="text-[8px] text-gray-500 font-bold">{t.displayTime || t.time || new Date().toLocaleTimeString()}</span>
+                             </div>
+                          </div>
+                          <span className={`text-[8px] font-black uppercase ${t.winner ? 'text-green-500' : 'text-red-500'}`}>
+                             {t.winner ? '✅ WIN' : '❌ LOSS'}
+                          </span>
+                       </div>
+                     )) : (
+                       <div className="text-[8px] text-gray-600 font-bold uppercase text-center py-2 opacity-50">Esperando Resultados Live...</div>
+                     )}
+                  </div>
+                </div>
+                <div className="flex-1 overflow-y-auto p-8 space-y-6 font-mono text-[11px]">
+                  {/* HORARIOS RECOMENDADOS */}
+                  <div className="bg-blue-500/10 border border-blue-500/20 p-5 rounded-3xl group hover:bg-blue-500/20 transition-all">
+                    <div className="flex items-center gap-3 mb-3">
+                      <Clock className="w-4 h-4 text-blue-400" />
+                      <span className="text-[10px] font-black uppercase tracking-widest text-blue-400">Trading Safe-Window</span>
+                    </div>
+                    <div className="text-xs font-black text-blue-100 italic mb-1">08:30 - 15:00 UTC</div>
+                    <div className="text-[9px] text-blue-400/60 font-bold uppercase leading-relaxed">Máxima liquidez, menor volatilidad algorítmica.</div>
+                  </div>
+
+                  {logs.map((log, i) => (
+                    <div key={i} className="flex gap-4 border-l border-blue-500/20 pl-4 py-1 animate-in fade-in slide-in-from-left-1">
+                      <span className="text-gray-600 shrink-0">{log.time}</span>
+                      <span className={log.text.includes('❌') ? 'text-red-400' : log.text.includes('✅') ? 'text-green-400' : 'text-blue-300'}>
+                        {log.text}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'estrategias' && (
+            <div className="max-w-6xl mx-auto space-y-8 animate-in fade-in zoom-in duration-500">
+               <div>
+                  <h2 className="text-4xl font-black text-white italic tracking-tighter uppercase mb-2">Estrategias</h2>
+                  <p className="text-gray-500 font-medium">Motor de backtesting y señales en vivo.</p>
+               </div>
+
+               <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                 {/* Tarjeta de Estrategia */}
+                 <div className="bg-[#0d121f] rounded-[40px] border border-blue-500/20 p-8 shadow-[0_0_30px_rgba(0,100,255,0.1)] relative overflow-hidden group">
+                    <div className="absolute top-0 right-0 p-8 opacity-20 group-hover:opacity-40 transition-opacity">
+                      <Zap className="w-32 h-32 text-blue-500" />
+                    </div>
+                    
+                    <div className="relative z-10">
+                      <div className="bg-blue-600 text-white text-[10px] font-black px-4 py-1 rounded-full uppercase tracking-widest inline-block mb-6">VIP EDITION</div>
+                      <h3 className="text-3xl font-black text-white mb-2">RSI(6) + CCI(14)</h3>
+                      <p className="text-gray-400 text-sm mb-8 leading-relaxed">
+                        Estrategia avanzada de reversión. Busca zonas de extrema sobrecompra/sobreventa donde ambos osciladores (RSI en 6 periodos y CCI en 14 periodos) confirman el agotamiento del precio.
+                      </p>
+                      
+                      <div className="space-y-4 mb-8">
+                        <div className="flex items-center gap-3 text-sm font-bold bg-white/5 p-4 rounded-2xl">
+                          <div className="w-2 h-2 rounded-full bg-green-500" /> 
+                          <span className="text-gray-300">COMPRA: RSI &lt; 30 + CCI &lt; -100</span>
+                        </div>
+                        <div className="flex items-center gap-3 text-sm font-bold bg-white/5 p-4 rounded-2xl">
+                          <div className="w-2 h-2 rounded-full bg-red-500" /> 
+                          <span className="text-gray-300">VENTA: RSI &gt; 70 + CCI &gt; 100</span>
+                        </div>
+                      </div>
+
+                      <div className="bg-[#000814] p-6 rounded-3xl border border-white/5 mb-8">
+                        <h4 className="text-[10px] uppercase font-black tracking-[0.3em] text-blue-500 mb-4 flex items-center gap-2">
+                          <Settings className="w-4 h-4" /> Parámetros del Ciclo de Prueba
+                        </h4>
+                        
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                           <div className="space-y-2">
+                              <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Cuenta a Utilizar</label>
+                              <select 
+                                value={backtestConfig.account}
+                                onChange={(e) => setBacktestConfig({...backtestConfig, account: e.target.value})}
+                                disabled={isTesting}
+                                className="w-full bg-black border border-white/10 rounded-xl p-3 text-white focus:border-blue-500 outline-none font-bold text-sm"
+                              >
+                                <option value="demo">DEMO ACCOUNT</option>
+                                <option value="real">REAL ACCOUNT</option>
+                              </select>
+                           </div>
+                           <div className="space-y-2">
+                              <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Inversión ($)</label>
+                              <input 
+                                type="number"
+                                min="1"
+                                value={backtestConfig.amount}
+                                disabled={isTesting}
+                                onChange={(e) => setBacktestConfig({...backtestConfig, amount: Number(e.target.value)})}
+                                className="w-full bg-black border border-white/10 rounded-xl p-3 text-white focus:border-blue-500 outline-none font-bold text-sm"
+                              />
+                           </div>
+                           <div className="space-y-2">
+                              <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Cant. de Entradas</label>
+                              <input 
+                                type="number"
+                                min="1"
+                                value={backtestConfig.cycles}
+                                disabled={isTesting}
+                                onChange={(e) => setBacktestConfig({...backtestConfig, cycles: Number(e.target.value)})}
+                                className="w-full bg-black border border-white/10 rounded-xl p-3 text-white focus:border-blue-500 outline-none font-bold text-sm"
+                              />
+                           </div>
+                        </div>
+
+                        <div className="flex items-center justify-between bg-blue-900/20 text-blue-400 text-xs p-3 rounded-xl font-medium border border-blue-500/20 mb-4">
+                          <div className="flex gap-3 items-center">
+                            <Shield className="w-4 h-4 shrink-0" />
+                            <span><b>Escáner Global:</b> Incluye FR 40, GER 30, Crypto, HK 33, US 500, Amazon y todo OTC.</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <button 
+                        onClick={runBacktest}
+                        disabled={isTesting}
+                        className={`w-full py-5 rounded-2xl font-black text-lg transition-all flex items-center justify-center gap-3 uppercase tracking-wider ${
+                          isTesting 
+                          ? 'bg-blue-900/50 text-blue-300 cursor-not-allowed shadow-none' 
+                          : 'bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white shadow-[0_0_20px_rgba(0,100,255,0.4)] hover:scale-[1.02]'
+                        }`}
+                      >
+                        {isTesting ? <RefreshCw className="w-6 h-6 animate-spin" /> : <Play className="w-6 h-6" />}
+                        {isTesting ? 'EJECUTANDO ANÁLISIS...' : 'INICIAR CAZA DE MERCADOS'}
+                      </button>
+                    </div>
+                 </div>
+
+                 {/* Panel de Resultados */}
+                 <div className="bg-[#0d121f] rounded-[40px] border border-white/5 p-8 flex flex-col justify-center">
+                    {!testResults && !isTesting && (
+                      <div className="text-center text-gray-600 font-bold tracking-widest flex flex-col items-center">
+                        <Activity className="w-16 h-16 mb-6 opacity-20" />
+                        <span className="uppercase text-sm">Motor Preparado.</span>
+                        <span className="text-[10px] mt-2 max-w-[200px] leading-relaxed opacity-60">Configura los parámetros y comienza el ciclo de prueba de 10 operaciones.</span>
+                      </div>
+                    )}
+
+                    {isTesting && (
+                      <div className="flex flex-col h-full max-h-[600px]">
+                        <div className="text-center mb-6">
+                           <div className="inline-flex items-center gap-2 bg-blue-500/10 text-blue-400 px-4 py-2 rounded-full border border-blue-500/20 text-[10px] font-black uppercase tracking-widest mb-4">
+                              <Cpu className="w-3 h-3 animate-spin" /> MODO HUNTER EN LINEA
+                           </div>
+                           <h3 className="text-2xl font-black text-white italic">RADAR ESTRATÉGICO</h3>
+                        </div>
+
+                        <div className="flex-1 overflow-y-auto space-y-3 pr-2 custom-scrollbar">
+                           {scanTelemetry.length === 0 ? (
+                             <div className="text-center py-20 text-gray-600 font-bold uppercase text-xs animate-pulse">Iniciando scanner...</div>
+                           ) : (
+                             scanTelemetry.map((item, idx) => {
+                               // Porcentaje hacia sobrecompra (RSI > 50) o sobreventa (RSI < 50)
+                               const rsiDist = item.rsi > 50
+                                 ? Math.min(100, ((item.rsi - 50) / 20) * 100)  // hacia sobrecompra (PUT)
+                                 : Math.min(100, ((50 - item.rsi) / 20) * 100); // hacia sobreventa (CALL)
+                               const cciDist = Math.min(100, (Math.abs(item.cci) / 80) * 100);
+                               const total = Math.min(99, (rsiDist + cciDist) / 2).toFixed(0);
+                               const isReady = item.rsi !== 50 && (Number(total) >= 95);
+                               const isScanning = item.rsi === 50 && item.cci === 0; // Aún no escaneado
+                               const direction = item.rsi >= 70 ? 'PUT 🔴' : item.rsi <= 30 ? 'CALL 🟢' : '';
+
+                               return (
+                                 <div key={idx} className={`bg-[#080b13] p-4 rounded-2xl border transition-all ${isReady ? 'border-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.3)] scale-[1.02]' : 'border-white/5'}`}>
+                                    <div className="flex justify-between items-center mb-2">
+                                       <span className="text-xs font-black text-white tracking-tighter truncate w-36">{item.asset}</span>
+                                       <span className={`text-[10px] font-black ${isReady ? 'text-blue-500 animate-pulse' : isScanning ? 'text-gray-700' : 'text-gray-500'}`}>
+                                         {isScanning ? '⏳ ESPERANDO' : direction || `${total}%`}
+                                       </span>
+                                    </div>
+                                    <div className="w-full bg-white/5 h-1.5 rounded-full overflow-hidden">
+                                       <div
+                                         className={`h-full transition-all duration-700 ${isReady ? 'bg-blue-500 animate-pulse' : isScanning ? 'bg-white/10' : 'bg-gradient-to-r from-blue-900 to-blue-600'}`}
+                                         style={{ width: isScanning ? '5%' : `${total}%` }}
+                                       />
+                                    </div>
+                                    <div className="flex justify-between mt-2">
+                                       <span className="text-[8px] font-bold text-gray-600 uppercase">RSI: {item.rsi === 50 && item.cci === 0 ? '--' : item.rsi.toFixed(1)}</span>
+                                       <span className="text-[8px] font-bold text-gray-600 uppercase">CCI: {item.rsi === 50 && item.cci === 0 ? '--' : item.cci.toFixed(1)}</span>
+                                    </div>
+                                 </div>
+                               );
+                             })
+                           )}
+                        </div>
+
+                        <div className="mt-6 pt-6 border-t border-white/5">
+                           <div className="bg-blue-600/10 border border-blue-500/20 p-4 rounded-2xl text-center">
+                              <p className="text-[10px] font-bold text-blue-400 uppercase mb-1">FASE ACTUAL</p>
+                              <p className="text-xs text-blue-200 font-medium">{backtestPhase}</p>
+                           </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {testResults && !isTesting && (
+                      <div className="space-y-8 animate-in slide-in-from-bottom-5">
+                         <div className="text-center border-b border-white/5 pb-6">
+                            <h3 className="text-[10px] tracking-[0.3em] font-black text-gray-500 uppercase mb-2">Resultados del Ciclo (10 Entradas)</h3>
+                            <div className="text-white text-2xl font-black italic tracking-tighter">PERFIL: CUENTA {testResults.accountUsed}</div>
+                            <div className="text-blue-500 font-bold text-sm mt-1">Inversión por entrada: ${testResults.amountUsed.toFixed(2)}</div>
+                         </div>
+                         
+                         <div className="grid grid-cols-2 gap-4">
+                           <div className="bg-[#080b13] p-6 rounded-3xl border border-white/5 text-center shadow-inner">
+                              <div className="text-[10px] text-gray-500 uppercase tracking-widest font-bold mb-2">Tasa de Acierto</div>
+                              <div className={`text-4xl font-black drop-shadow-md ${testResults.winRate >= 50 ? 'text-green-400' : 'text-red-400'}`}>
+                                {testResults.winRate}%
+                              </div>
+                           </div>
+                           <div className="bg-[#080b13] p-6 rounded-3xl border border-white/5 text-center shadow-inner">
+                              <div className="text-[10px] text-gray-500 uppercase tracking-widest font-bold mb-2">Neto (Beneficio)</div>
+                              <div className={`text-3xl font-black mt-1 ${testResults.isPositive ? 'text-green-500' : 'text-red-500'}`}>
+                                {testResults.profit}
+                              </div>
+                           </div>
+                         </div>
+
+                         <div className="bg-[#080b13] p-6 rounded-3xl border border-white/5">
+                            <div className="text-[10px] text-gray-500 uppercase tracking-widest font-bold mb-4 text-center">Desglose de Efectividad</div>
+                            <div className="flex justify-between items-center bg-white/5 px-6 py-4 rounded-2xl font-mono text-sm shadow-inner">
+                              <span className="text-gray-400">Total Operaciones: <b className="text-white">{testResults.trades}</b></span>
+                              <div className="flex gap-4">
+                                <span className="text-green-400 font-black flex items-center gap-1"><CheckCircle2 className="w-4 h-4"/> G: {testResults.wins}</span>
+                                <span className="text-red-400 font-black flex items-center gap-1"><AlertCircle className="w-4 h-4"/> P: {testResults.losses}</span>
+                              </div>
+                            </div>
+                         </div>
+                      </div>
+                    )}
+                 </div>
+               </div>
+            </div>
+          )}
+
+          {activeTab === 'ajustes' && (
+            <div className="max-w-2xl mx-auto space-y-12 py-10">
+               <div>
+                  <h2 className="text-6xl font-black text-white italic tracking-tighter mb-4 uppercase">Ajustes</h2>
+                  <p className="text-gray-500 font-medium">Configuración de enlace seguro y credenciales del Broker.</p>
+               </div>
+
+               <div className="space-y-8">
+                 <div className="bg-[#0d121f] p-12 rounded-[48px] border border-white/5 space-y-8 shadow-2xl">
+                    <div className="space-y-4">
+                       <label className="text-[10px] font-black tracking-[0.3em] text-blue-500 uppercase">Cloud Gateway</label>
+                       <div className="flex gap-4">
+                          <input 
+                            ref={gatewayInputRef}
+                            defaultValue={gatewayUrl}
+                            placeholder="https://su-tunel.trycloudflare.com"
+                            className="flex-1 bg-black border border-white/5 rounded-2xl p-5 text-white focus:border-blue-500 outline-none font-bold placeholder:text-gray-800"
+                          />
+                          <button 
+                            onClick={updateGateway}
+                            className="bg-blue-600 hover:bg-blue-500 text-white font-black px-10 rounded-2xl transition-all shadow-lg active:scale-95 uppercase text-xs"
+                          >
+                            Enlazar
+                          </button>
+                       </div>
+                    </div>
+
+                    <form onSubmit={handleBrokerConnect} className="space-y-6 pt-10 border-t border-white/5">
+                        <div className="space-y-3">
+                           <label className="text-[10px] font-black text-gray-500 uppercase tracking-[0.3em]">Broker Account</label>
+                           <input 
+                             ref={iqEmailRef}
+                             defaultValue={localStorage.getItem('iq_email') || ''}
+                             placeholder="Email IQ"
+                             className="w-full bg-black border border-white/5 rounded-2xl p-5 text-white focus:border-blue-500 outline-none font-bold"
+                           />
+                           <input 
+                             ref={iqPassRef}
+                             type="password"
+                             defaultValue={localStorage.getItem('iq_pass') || ''}
+                             placeholder="Password IQ"
+                             className="w-full bg-black border border-white/5 rounded-2xl p-5 text-white focus:border-blue-500 outline-none font-bold"
+                           />
+                        </div>
+                        <button 
+                          disabled={isLinking || socketStatus === 'offline'}
+                          className={`w-full py-6 rounded-3xl font-black text-xl transition-all ${
+                            isLinking || socketStatus === 'offline' 
+                            ? 'bg-gray-800 text-gray-600 cursor-not-allowed' 
+                            : 'bg-green-600 hover:bg-green-500 text-white shadow-xl active:scale-95'
+                          }`}
+                        >
+                          {isLinking ? 'SINCRONIZANDO...' : 'VINCULAR CLOUD BROKER'}
+                        </button>
+                    </form>
+                 </div>
+               </div>
+            </div>
+          )}
+        </div>
       </main>
-      
-      <style dangerouslySetInnerHTML={{ __html: `
-        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
-        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 10px; }
-      `}} />
+
+      {/* MODAL DE REPORTE FINAL DE CICLO */}
+      {cycleReport && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-xl z-[100] flex items-center justify-center p-4 overflow-y-auto">
+           <div className="w-full max-w-2xl bg-[#0d121f] border border-blue-500/30 rounded-[40px] shadow-[0_0_100px_rgba(37,99,235,0.2)] p-10 animate-in zoom-in duration-300">
+              <div className="flex justify-between items-center mb-10 border-b border-white/5 pb-6">
+                 <div>
+                    <h3 className="text-3xl font-black text-white italic tracking-tighter uppercase">Análisis de Operaciones</h3>
+                    <p className="text-[10px] text-blue-400 font-bold uppercase tracking-widest mt-1">Resultados de tu última caza estratégica</p>
+                 </div>
+                 <button 
+                   onClick={() => setCycleReport(null)}
+                   className="p-3 bg-white/5 hover:bg-white/10 rounded-full transition-all text-gray-500 hover:text-white"
+                 >
+                    <LogOut className="w-6 h-6" />
+                 </button>
+              </div>
+
+              <div className="space-y-4 mb-10 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
+                 {cycleReport.map((t, idx) => (
+                   <div key={idx} className="bg-white/5 border border-white/5 p-6 rounded-3xl flex items-center gap-6">
+                      <div className={`w-12 h-12 rounded-2xl flex items-center justify-center font-black ${t.side === 'CALL' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
+                         {t.side === 'CALL' ? '↑' : '↓'}
+                      </div>
+                      <div className="flex-1">
+                         <div className="text-white font-black text-lg uppercase tracking-tight flex items-center gap-3">
+                            {t.asset}
+                            <span className={`text-[9px] px-2 py-0.5 rounded-md bg-white/5 ${t.color}`}>{t.result}</span>
+                         </div>
+                         <div className="text-[10px] text-gray-500 font-bold uppercase mt-1">CONTEXTO: RSI {t.rsi} | CCI {t.cci}</div>
+                      </div>
+                      <div className="text-right">
+                         <div className="text-white font-black text-sm">$ {t.entry}</div>
+                         <div className="text-[8px] text-blue-500 font-black uppercase mt-1">Operación {idx + 1}</div>
+                      </div>
+                   </div>
+                 ))}
+              </div>
+
+              <div className="grid grid-cols-2 gap-4 mb-10">
+                 <div className="bg-white/5 p-6 rounded-3xl border border-white/5 text-center">
+                    <div className="text-[10px] text-gray-500 font-bold uppercase mb-2">Efectividad Bruta</div>
+                    <div className="text-3xl font-black text-white">{testResults ? ((testResults.wins / testResults.trades) * 100).toFixed(0) : 0}%</div>
+                 </div>
+                 <div className="bg-white/5 p-6 rounded-3xl border border-white/5 text-center">
+                    <div className="text-[10px] text-gray-500 font-bold uppercase mb-2">Balance Neto Est.</div>
+                    <div className={`text-3xl font-black ${testResults && testResults.isPositive ? 'text-green-500' : 'text-red-500'}`}>
+                       {testResults ? testResults.profit : '$0.00'}
+                    </div>
+                 </div>
+              </div>
+
+              <button 
+                onClick={() => setCycleReport(null)}
+                className="w-full py-5 bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-black rounded-2xl hover:scale-[1.02] transition-all uppercase tracking-widest shadow-xl shadow-blue-500/20"
+              >
+                 Cerrar y Continuar Aprendiendo
+              </button>
+           </div>
+        </div>
+      )}
     </div>
   );
 };

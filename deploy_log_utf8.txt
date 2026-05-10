@@ -1,0 +1,61 @@
+﻿
+> app-de-trading@0.0.0 deploy
+> vite build && npx firebase deploy
+
+[36mvite v8.0.1 [32mbuilding client environment for production...[36m[39m
+[2K
+transforming...Ô£ô 1775 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                   0.46 kB Ôöé gzip:   0.30 kB
+dist/assets/index-DXCl2H4Q.css   35.63 kB Ôöé gzip:   6.69 kB
+dist/assets/index-B6fhfw-N.js   612.63 kB Ôöé gzip: 186.53 kB
+
+[32mÔ£ô built in 1.19s[39m
+node.exe : [33m[plugin 
+builtin:vite-reporter] 
+En línea: 1 Carácter: 1
++ & "C:\Program 
+Files\nodejs/node.exe" 
+"C:\Program 
+Files\nodejs/node_mo ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~
+    + CategoryInfo           
+   : NotSpecified: ([33m[p  
+  lugin builtin:vite-repor   
+ ter] :String) [], Remote    
+Exception
+    + FullyQualifiedErrorId  
+   : NativeCommandError
+ 
+(!) Some chunks are larger 
+than 500 kB after 
+minification. Consider:
+- Using dynamic import() to 
+code-split the application
+- Use build.rolldownOptions.o
+utput.codeSplitting to 
+improve chunking: https://rol
+ldown.rs/reference/OutputOpti
+ons.codeSplitting
+- Adjust chunk size limit 
+for this warning via build.ch
+unkSizeWarningLimit.[39m
+
+[1m[37m===[39m Deploying to 'tradebotpro-52ce9'...[22m
+
+[36m[1mi [22m[39m deploying [1mhosting[22m
+[36m[1mi  hosting[tradebotpro-52ce9]:[22m[39m beginning deploy...
+[36m[1mi  hosting[tradebotpro-52ce9]:[22m[39m found 5 files in [1mdist[22m
+[32m[1m+  hosting[tradebotpro-52ce9]:[22m[39m file upload complete
+[36m[1mi  hosting[tradebotpro-52ce9]:[22m[39m finalizing version...
+[32m[1m+  hosting[tradebotpro-52ce9]:[22m[39m version finalized
+[36m[1mi  hosting[tradebotpro-52ce9]:[22m[39m releasing new version...
+[32m[1m+  hosting[tradebotpro-52ce9]:[22m[39m release complete
+
+[32m[1m+ [22m[39m [1m[4mDeploy complete![24m[22m
+
+[1mProject Console:[22m https://console.firebase.google.com/project/tradebotpro-52ce9/overview
+[1mHosting URL:[22m https://tradebotpro-52ce9.web.app

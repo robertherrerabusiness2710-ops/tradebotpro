@@ -1,0 +1,143 @@
+{
+  "request_id": "1774818233178",
+  "name": "instruments",
+  "msg": {
+    "message": "Failed on command execution [4000] Can not parse body command trading-instruments.get-instruments({\"user_id\":36276946,\"user_group_id\":191,\"group_id\":191,\"is_regulated\":false,\"brand_id\":1,\"country_id\":211,\"company_id\":2,\"trading_group_id\":\"191_0\",\"digital_option_trading_group_id\":\"191_0\",\"turbo_option_trading_group_id\":\"191_0\",\"binary_option_trading_group_id\":\"191_0\",\"blitz_option_trading_group_id\":\"191_0\",\"fx_option_trading_group_id\":\"191_0\",\"forex_trading_group_id\":\"191_0\",\"cfd_trading_group_id\":\"191_0\",\"crypto_trading_group_id\":\"191_0\",\"brand_host\":\"iqoption.com\",\"platform_id\":82,\"connection_hash\":\"13225673587918985461\",\"lang\":\"en_US\",\"ip\":\"38.183.115.125\",\"x_forwarded_for\":\"38.183.115.125\",\"x_geoip_country_code\":\"VE\",\"user_agent\":\"\",\"ws_message_received_timestamp\":1774818232791})({\"type\":\"turbo-option\"})"
+  },
+  "status": 4000
+}{
+  "request_id": "1774818840924",
+  "name": "instruments",
+  "msg": {
+    "message": "Failed on command execution [4000] Can not parse body command trading-instruments.get-instruments({\"user_id\":36276946,\"user_group_id\":191,\"group_id\":191,\"is_regulated\":false,\"brand_id\":1,\"country_id\":211,\"company_id\":2,\"trading_group_id\":\"191_0\",\"digital_option_trading_group_id\":\"191_0\",\"turbo_option_trading_group_id\":\"191_0\",\"binary_option_trading_group_id\":\"191_0\",\"blitz_option_trading_group_id\":\"191_0\",\"fx_option_trading_group_id\":\"191_0\",\"forex_trading_group_id\":\"191_0\",\"cfd_trading_group_id\":\"191_0\",\"crypto_trading_group_id\":\"191_0\",\"brand_host\":\"iqoption.com\",\"platform_id\":82,\"connection_hash\":\"6271007626758232183\",\"lang\":\"en_US\",\"ip\":\"38.183.115.125\",\"x_forwarded_for\":\"38.183.115.125\",\"x_geoip_country_code\":\"VE\",\"user_agent\":\"\",\"ws_message_received_timestamp\":1774818841243})({\"type\":\"binary\"})"
+  },
+  "status": 4000
+}
+{
+  "request_id": "1774824029940",
+  "name": "instruments",
+  "msg": {
+    "message": "Failed on command execution [4000] Can not parse body command trading-instruments.get-instruments({\"user_id\":36276946,\"user_group_id\":191,\"group_id\":191,\"is_regulated\":false,\"brand_id\":1,\"country_id\":211,\"company_id\":2,\"trading_group_id\":\"191_0\",\"digital_option_trading_group_id\":\"191_0\",\"turbo_option_trading_group_id\":\"191_0\",\"binary_option_trading_group_id\":\"191_0\",\"blitz_option_trading_group_id\":\"191_0\",\"fx_option_trading_group_id\":\"191_0\",\"forex_trading_group_id\":\"191_0\",\"cfd_trading_group_id\":\"191_0\",\"crypto_trading_group_id\":\"191_0\",\"brand_host\":\"iqoption.com\",\"platform_id\":82,\"connection_hash\":\"6444080309115178909\",\"lang\":\"en_US\",\"ip\":\"38.183.115.125\",\"x_forwarded_for\":\"38.183.115.125\",\"x_geoip_country_code\":\"VE\",\"user_agent\":\"\",\"ws_message_received_timestamp\":1774824030764})({\"type\":\"binary\"})"
+  },
+  "status": 4000
+}
+{
+  "request_id": "1774824948425",
+  "name": "instruments",
+  "msg": {
+    "message": "Failed on command execution [4000] Can not parse body command trading-instruments.get-instruments({\"user_id\":36276946,\"user_group_id\":191,\"group_id\":191,\"is_regulated\":false,\"brand_id\":1,\"country_id\":211,\"company_id\":2,\"trading_group_id\":\"191_0\",\"digital_option_trading_group_id\":\"191_0\",\"turbo_option_trading_group_id\":\"191_0\",\"binary_option_trading_group_id\":\"191_0\",\"blitz_option_trading_group_id\":\"191_0\",\"fx_option_trading_group_id\":\"191_0\",\"forex_trading_group_id\":\"191_0\",\"cfd_trading_group_id\":\"191_0\",\"crypto_trading_group_id\":\"191_0\",\"brand_host\":\"iqoption.com\",\"platform_id\":82,\"connection_hash\":\"17646112352451638181\",\"lang\":\"en_US\",\"ip\":\"38.183.115.125\",\"x_forwarded_for\":\"38.183.115.125\",\"x_geoip_country_code\":\"VE\",\"user_agent\":\"\",\"ws_message_received_timestamp\":1774824949262})({\"type\":\"binary\"})"
+  },
+  "status": 4000
+}
+{
+  "request_id": "1774825415477",
+  "name": "instruments",
+  "msg": {
+    "message": "Failed on command execution [4000] Can not parse body command trading-instruments.get-instruments({\"user_id\":36276946,\"user_group_id\":191,\"group_id\":191,\"is_regulated\":false,\"brand_id\":1,\"country_id\":211,\"company_id\":2,\"trading_group_id\":\"191_0\",\"digital_option_trading_group_id\":\"191_0\",\"turbo_option_trading_group_id\":\"191_0\",\"binary_option_trading_group_id\":\"191_0\",\"blitz_option_trading_group_id\":\"191_0\",\"fx_option_trading_group_id\":\"191_0\",\"forex_trading_group_id\":\"191_0\",\"cfd_trading_group_id\":\"191_0\",\"crypto_trading_group_id\":\"191_0\",\"brand_host\":\"iqoption.com\",\"platform_id\":82,\"connection_hash\":\"6941723487738944387\",\"lang\":\"en_US\",\"ip\":\"38.183.115.125\",\"x_forwarded_for\":\"38.183.115.125\",\"x_geoip_country_code\":\"VE\",\"user_agent\":\"\",\"ws_message_received_timestamp\":1774825416316})({\"type\":\"binary\"})"
+  },
+  "status": 4000
+}
+{
+  "request_id": "1774833826575",
+  "name": "instruments",
+  "msg": {
+    "message": "Failed on command execution [4000] Can not parse body command trading-instruments.get-instruments({\"user_id\":36276946,\"user_group_id\":191,\"group_id\":191,\"is_regulated\":false,\"brand_id\":1,\"country_id\":211,\"company_id\":2,\"trading_group_id\":\"191_0\",\"digital_option_trading_group_id\":\"191_0\",\"turbo_option_trading_group_id\":\"191_0\",\"binary_option_trading_group_id\":\"191_0\",\"blitz_option_trading_group_id\":\"191_0\",\"fx_option_trading_group_id\":\"191_0\",\"forex_trading_group_id\":\"191_0\",\"cfd_trading_group_id\":\"191_0\",\"crypto_trading_group_id\":\"191_0\",\"brand_host\":\"iqoption.com\",\"platform_id\":82,\"connection_hash\":\"15029709910024884252\",\"lang\":\"en_US\",\"ip\":\"38.183.115.125\",\"x_forwarded_for\":\"38.183.115.125\",\"x_geoip_country_code\":\"VE\",\"user_agent\":\"\",\"ws_message_received_timestamp\":1774833827190})({\"type\":\"binary\"})"
+  },
+  "status": 4000
+}
+{
+  "request_id": "1774835049507",
+  "name": "instruments",
+  "msg": {
+    "message": "Failed on command execution [4000] Can not parse body command trading-instruments.get-instruments({\"user_id\":36276946,\"user_group_id\":191,\"group_id\":191,\"is_regulated\":false,\"brand_id\":1,\"country_id\":211,\"company_id\":2,\"trading_group_id\":\"191_0\",\"digital_option_trading_group_id\":\"191_0\",\"turbo_option_trading_group_id\":\"191_0\",\"binary_option_trading_group_id\":\"191_0\",\"blitz_option_trading_group_id\":\"191_0\",\"fx_option_trading_group_id\":\"191_0\",\"forex_trading_group_id\":\"191_0\",\"cfd_trading_group_id\":\"191_0\",\"crypto_trading_group_id\":\"191_0\",\"brand_host\":\"iqoption.com\",\"platform_id\":82,\"connection_hash\":\"14284909831679284492\",\"lang\":\"en_US\",\"ip\":\"38.183.115.125\",\"x_forwarded_for\":\"38.183.115.125\",\"x_geoip_country_code\":\"VE\",\"user_agent\":\"\",\"ws_message_received_timestamp\":1774835050062})({\"type\":\"binary\"})"
+  },
+  "status": 4000
+}
+{
+  "request_id": "1774835509389",
+  "name": "instruments",
+  "msg": {
+    "message": "Failed on command execution [4000] Can not parse body command trading-instruments.get-instruments({\"user_id\":36276946,\"user_group_id\":191,\"group_id\":191,\"is_regulated\":false,\"brand_id\":1,\"country_id\":211,\"company_id\":2,\"trading_group_id\":\"191_0\",\"digital_option_trading_group_id\":\"191_0\",\"turbo_option_trading_group_id\":\"191_0\",\"binary_option_trading_group_id\":\"191_0\",\"blitz_option_trading_group_id\":\"191_0\",\"fx_option_trading_group_id\":\"191_0\",\"forex_trading_group_id\":\"191_0\",\"cfd_trading_group_id\":\"191_0\",\"crypto_trading_group_id\":\"191_0\",\"brand_host\":\"iqoption.com\",\"platform_id\":82,\"connection_hash\":\"12093255719094555138\",\"lang\":\"en_US\",\"ip\":\"38.183.115.125\",\"x_forwarded_for\":\"38.183.115.125\",\"x_geoip_country_code\":\"VE\",\"user_agent\":\"\",\"ws_message_received_timestamp\":1774835509868})({\"type\":\"binary\"})"
+  },
+  "status": 4000
+}
+{
+  "request_id": "1774837095956",
+  "name": "instruments",
+  "msg": {
+    "message": "Failed on command execution [4000] Can not parse body command trading-instruments.get-instruments({\"user_id\":36276946,\"user_group_id\":191,\"group_id\":191,\"is_regulated\":false,\"brand_id\":1,\"country_id\":211,\"company_id\":2,\"trading_group_id\":\"191_0\",\"digital_option_trading_group_id\":\"191_0\",\"turbo_option_trading_group_id\":\"191_0\",\"binary_option_trading_group_id\":\"191_0\",\"blitz_option_trading_group_id\":\"191_0\",\"fx_option_trading_group_id\":\"191_0\",\"forex_trading_group_id\":\"191_0\",\"cfd_trading_group_id\":\"191_0\",\"crypto_trading_group_id\":\"191_0\",\"brand_host\":\"iqoption.com\",\"platform_id\":82,\"connection_hash\":\"14318240578597839586\",\"lang\":\"en_US\",\"ip\":\"38.183.115.125\",\"x_forwarded_for\":\"38.183.115.125\",\"x_geoip_country_code\":\"VE\",\"user_agent\":\"\",\"ws_message_received_timestamp\":1774837096356})({\"type\":\"binary\"})"
+  },
+  "status": 4000
+}
+{
+  "request_id": "1774838012376",
+  "name": "instruments",
+  "msg": {
+    "message": "Failed on command execution [4000] Can not parse body command trading-instruments.get-instruments({\"user_id\":36276946,\"user_group_id\":191,\"group_id\":191,\"is_regulated\":false,\"brand_id\":1,\"country_id\":211,\"company_id\":2,\"trading_group_id\":\"191_0\",\"digital_option_trading_group_id\":\"191_0\",\"turbo_option_trading_group_id\":\"191_0\",\"binary_option_trading_group_id\":\"191_0\",\"blitz_option_trading_group_id\":\"191_0\",\"fx_option_trading_group_id\":\"191_0\",\"forex_trading_group_id\":\"191_0\",\"cfd_trading_group_id\":\"191_0\",\"crypto_trading_group_id\":\"191_0\",\"brand_host\":\"iqoption.com\",\"platform_id\":82,\"connection_hash\":\"14872722917034115237\",\"lang\":\"en_US\",\"ip\":\"38.183.115.125\",\"x_forwarded_for\":\"38.183.115.125\",\"x_geoip_country_code\":\"VE\",\"user_agent\":\"\",\"ws_message_received_timestamp\":1774838012737})({\"type\":\"binary\"})"
+  },
+  "status": 4000
+}
+{
+  "request_id": "1774838275713",
+  "name": "instruments",
+  "msg": {
+    "message": "Failed on command execution [4000] Can not parse body command trading-instruments.get-instruments({\"user_id\":36276946,\"user_group_id\":191,\"group_id\":191,\"is_regulated\":false,\"brand_id\":1,\"country_id\":211,\"company_id\":2,\"trading_group_id\":\"191_0\",\"digital_option_trading_group_id\":\"191_0\",\"turbo_option_trading_group_id\":\"191_0\",\"binary_option_trading_group_id\":\"191_0\",\"blitz_option_trading_group_id\":\"191_0\",\"fx_option_trading_group_id\":\"191_0\",\"forex_trading_group_id\":\"191_0\",\"cfd_trading_group_id\":\"191_0\",\"crypto_trading_group_id\":\"191_0\",\"brand_host\":\"iqoption.com\",\"platform_id\":82,\"connection_hash\":\"13633360157630054881\",\"lang\":\"en_US\",\"ip\":\"38.183.115.125\",\"x_forwarded_for\":\"38.183.115.125\",\"x_geoip_country_code\":\"VE\",\"user_agent\":\"\",\"ws_message_received_timestamp\":1774838276070})({\"type\":\"binary\"})"
+  },
+  "status": 4000
+}
+{
+  "request_id": "1774839148779",
+  "name": "instruments",
+  "msg": {
+    "message": "Failed on command execution [4000] Can not parse body command trading-instruments.get-instruments({\"user_id\":36276946,\"user_group_id\":191,\"group_id\":191,\"is_regulated\":false,\"brand_id\":1,\"country_id\":211,\"company_id\":2,\"trading_group_id\":\"191_0\",\"digital_option_trading_group_id\":\"191_0\",\"turbo_option_trading_group_id\":\"191_0\",\"binary_option_trading_group_id\":\"191_0\",\"blitz_option_trading_group_id\":\"191_0\",\"fx_option_trading_group_id\":\"191_0\",\"forex_trading_group_id\":\"191_0\",\"cfd_trading_group_id\":\"191_0\",\"crypto_trading_group_id\":\"191_0\",\"brand_host\":\"iqoption.com\",\"platform_id\":82,\"connection_hash\":\"2021617713614004242\",\"lang\":\"en_US\",\"ip\":\"38.183.115.125\",\"x_forwarded_for\":\"38.183.115.125\",\"x_geoip_country_code\":\"VE\",\"user_agent\":\"\",\"ws_message_received_timestamp\":1774839149120})({\"type\":\"binary\"})"
+  },
+  "status": 4000
+}
+{
+  "request_id": "1774839912714",
+  "name": "instruments",
+  "msg": {
+    "message": "Failed on command execution [4000] Can not parse body command trading-instruments.get-instruments({\"user_id\":36276946,\"user_group_id\":191,\"group_id\":191,\"is_regulated\":false,\"brand_id\":1,\"country_id\":211,\"company_id\":2,\"trading_group_id\":\"191_0\",\"digital_option_trading_group_id\":\"191_0\",\"turbo_option_trading_group_id\":\"191_0\",\"binary_option_trading_group_id\":\"191_0\",\"blitz_option_trading_group_id\":\"191_0\",\"fx_option_trading_group_id\":\"191_0\",\"forex_trading_group_id\":\"191_0\",\"cfd_trading_group_id\":\"191_0\",\"crypto_trading_group_id\":\"191_0\",\"brand_host\":\"iqoption.com\",\"platform_id\":82,\"connection_hash\":\"7614432866051012977\",\"lang\":\"en_US\",\"ip\":\"38.183.115.125\",\"x_forwarded_for\":\"38.183.115.125\",\"x_geoip_country_code\":\"VE\",\"user_agent\":\"\",\"ws_message_received_timestamp\":1774839913060})({\"type\":\"binary\"})"
+  },
+  "status": 4000
+}
+{
+  "request_id": "1774840439569",
+  "name": "instruments",
+  "msg": {
+    "message": "Failed on command execution [4000] Can not parse body command trading-instruments.get-instruments({\"user_id\":36276946,\"user_group_id\":191,\"group_id\":191,\"is_regulated\":false,\"brand_id\":1,\"country_id\":211,\"company_id\":2,\"trading_group_id\":\"191_0\",\"digital_option_trading_group_id\":\"191_0\",\"turbo_option_trading_group_id\":\"191_0\",\"binary_option_trading_group_id\":\"191_0\",\"blitz_option_trading_group_id\":\"191_0\",\"fx_option_trading_group_id\":\"191_0\",\"forex_trading_group_id\":\"191_0\",\"cfd_trading_group_id\":\"191_0\",\"crypto_trading_group_id\":\"191_0\",\"brand_host\":\"iqoption.com\",\"platform_id\":82,\"connection_hash\":\"16913762405036774079\",\"lang\":\"en_US\",\"ip\":\"38.183.115.125\",\"x_forwarded_for\":\"38.183.115.125\",\"x_geoip_country_code\":\"VE\",\"user_agent\":\"\",\"ws_message_received_timestamp\":1774840439899})({\"type\":\"binary\"})"
+  },
+  "status": 4000
+}
+{
+  "request_id": "1774840925610",
+  "name": "instruments",
+  "msg": {
+    "message": "Failed on command execution [4000] Can not parse body command trading-instruments.get-instruments({\"user_id\":36276946,\"user_group_id\":191,\"group_id\":191,\"is_regulated\":false,\"brand_id\":1,\"country_id\":211,\"company_id\":2,\"trading_group_id\":\"191_0\",\"digital_option_trading_group_id\":\"191_0\",\"turbo_option_trading_group_id\":\"191_0\",\"binary_option_trading_group_id\":\"191_0\",\"blitz_option_trading_group_id\":\"191_0\",\"fx_option_trading_group_id\":\"191_0\",\"forex_trading_group_id\":\"191_0\",\"cfd_trading_group_id\":\"191_0\",\"crypto_trading_group_id\":\"191_0\",\"brand_host\":\"iqoption.com\",\"platform_id\":82,\"connection_hash\":\"140049198956621454\",\"lang\":\"en_US\",\"ip\":\"38.183.115.125\",\"x_forwarded_for\":\"38.183.115.125\",\"x_geoip_country_code\":\"VE\",\"user_agent\":\"\",\"ws_message_received_timestamp\":1774840925944})({\"type\":\"binary\"})"
+  },
+  "status": 4000
+}
+{
+  "request_id": "1775169277878",
+  "name": "instruments",
+  "msg": {
+    "message": "Failed on command execution [4000] Can not parse body command trading-instruments.get-instruments({\"user_id\":36276946,\"user_group_id\":191,\"group_id\":191,\"is_regulated\":false,\"brand_id\":1,\"country_id\":211,\"company_id\":2,\"trading_group_id\":\"191_0\",\"digital_option_trading_group_id\":\"191_0\",\"turbo_option_trading_group_id\":\"191_0\",\"binary_option_trading_group_id\":\"191_0\",\"blitz_option_trading_group_id\":\"191_0\",\"fx_option_trading_group_id\":\"191_0\",\"forex_trading_group_id\":\"191_0\",\"cfd_trading_group_id\":\"191_0\",\"crypto_trading_group_id\":\"191_0\",\"brand_host\":\"iqoption.com\",\"platform_id\":82,\"connection_hash\":\"16122505471739485656\",\"lang\":\"en_US\",\"ip\":\"38.159.50.63\",\"x_forwarded_for\":\"38.159.50.63\",\"x_geoip_country_code\":\"VE\",\"user_agent\":\"\",\"ws_message_received_timestamp\":1775169278771})({\"type\":\"binary\"})"
+  },
+  "status": 4000
+}
+{
+  "request_id": "1775169707821",
+  "name": "instruments",
+  "msg": {
+    "message": "Failed on command execution [4000] Can not parse body command trading-instruments.get-instruments({\"user_id\":36276946,\"user_group_id\":191,\"group_id\":191,\"is_regulated\":false,\"brand_id\":1,\"country_id\":211,\"company_id\":2,\"trading_group_id\":\"191_0\",\"digital_option_trading_group_id\":\"191_0\",\"turbo_option_trading_group_id\":\"191_0\",\"binary_option_trading_group_id\":\"191_0\",\"blitz_option_trading_group_id\":\"191_0\",\"fx_option_trading_group_id\":\"191_0\",\"forex_trading_group_id\":\"191_0\",\"cfd_trading_group_id\":\"191_0\",\"crypto_trading_group_id\":\"191_0\",\"brand_host\":\"iqoption.com\",\"platform_id\":82,\"connection_hash\":\"16208419039274003507\",\"lang\":\"en_US\",\"ip\":\"38.159.50.63\",\"x_forwarded_for\":\"38.159.50.63\",\"x_geoip_country_code\":\"VE\",\"user_agent\":\"\",\"ws_message_received_timestamp\":1775169708650})({\"type\":\"binary\"})"
+  },
+  "status": 4000
+}
+{
+  "request_id": "1775170499517",
+  "name": "instruments",
+  "msg": {
+    "message": "Failed on command execution [4000] Can not parse body command trading-instruments.get-instruments({\"user_id\":36276946,\"user_group_id\":191,\"group_id\":191,\"is_regulated\":false,\"brand_id\":1,\"country_id\":211,\"company_id\":2,\"trading_group_id\":\"191_0\",\"digital_option_trading_group_id\":\"191_0\",\"turbo_option_trading_group_id\":\"191_0\",\"binary_option_trading_group_id\":\"191_0\",\"blitz_option_trading_group_id\":\"191_0\",\"fx_option_trading_group_id\":\"191_0\",\"forex_trading_group_id\":\"191_0\",\"cfd_trading_group_id\":\"191_0\",\"crypto_trading_group_id\":\"191_0\",\"brand_host\":\"iqoption.com\",\"platform_id\":82,\"connection_hash\":\"1699897979043890788\",\"lang\":\"en_US\",\"ip\":\"38.159.50.63\",\"x_forwarded_for\":\"38.159.50.63\",\"x_geoip_country_code\":\"VE\",\"user_agent\":\"\",\"ws_message_received_timestamp\":1775170500196})({\"type\":\"binary\"})"
+  },
+  "status": 4000
+}
