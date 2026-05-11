@@ -515,11 +515,11 @@ const App = () => {
                       <div className="space-y-4 mb-8">
                         <div className="flex items-center gap-3 text-sm font-bold bg-white/5 p-4 rounded-2xl">
                           <div className="w-2 h-2 rounded-full bg-green-500" /> 
-                          <span className="text-gray-300">COMPRA: RSI &lt; 30 + CCI &lt; -100</span>
+                          <span className="text-gray-300">COMPRA: RSI &lt; 10 + CCI &lt; -200</span>
                         </div>
                         <div className="flex items-center gap-3 text-sm font-bold bg-white/5 p-4 rounded-2xl">
                           <div className="w-2 h-2 rounded-full bg-red-500" /> 
-                          <span className="text-gray-300">VENTA: RSI &gt; 70 + CCI &gt; 100</span>
+                          <span className="text-gray-300">VENTA: RSI &gt; 90 + CCI &gt; 200</span>
                         </div>
                       </div>
 
