@@ -35,16 +35,21 @@ io.on('connection', (socket) => {
 
     socket.on('auth_link', (uid) => {
         socket.join(uid);
+        socket.uid = uid;
         const session = userSessions.get(uid);
         if (session && session.profile) {
             socket.emit('iq_connected', { name: session.profile.name });
             if (session.balances) {
                 socket.emit('balance_sync', {
-                    demo: session.balances.demo.toFixed(2),
-                    real: session.balances.real.toFixed(2)
+                    demo: Number(session.balances.demo).toFixed(2),
+                    real: Number(session.balances.real).toFixed(2)
                 });
             }
             if (session.botActivo && session.botState) {
+                // Restaurar radar
+                if (session.scannedAssets) {
+                    socket.emit('scan_init', { assets: session.scannedAssets });
+                }
                 socket.emit('bot_restored_state', session.botState);
             }
         }
@@ -66,17 +71,17 @@ io.on('connection', (socket) => {
                 
                 socket.emit('iq_connected', { name: profile.name });
                 
-                // Extraer balances iniciales
-                let userDemo = profile.balances?.find(b => b.type === 4)?.amount || 0;
-                let userReal = profile.balances?.find(b => b.type === 1)?.amount || 0;
+                // Extraer balances iniciales correctamente
+                let userDemo = profile.balances?.find(b => b.type === 4)?.amount || profile.balances?.find(b => b.type === 4)?.balance || 0;
+                let userReal = profile.balances?.find(b => b.type === 1)?.amount || profile.balances?.find(b => b.type === 1)?.balance || 0;
                 
                 socket.emit('balance_sync', {
-                    demo: userDemo.toFixed(2),
-                    real: userReal.toFixed(2)
+                    demo: Number(userDemo).toFixed(2),
+                    real: Number(userReal).toFixed(2)
                 });
                 
                 // Guardar variables de balance en la sesion para actualizarlas
-                userSessions.get(uid).balances = { demo: userDemo, real: userReal };
+                userSessions.set(uid, { api, profile, balances: { demo: Number(userDemo), real: Number(userReal) } });
                 
                 // DIAGNÓSTICO PROFUNDO: Guardar el perfil en archivo físico
                 try {
@@ -332,8 +337,11 @@ io.on('connection', (socket) => {
                     // Emitir lista inicial al frontend para mostrar todas las barras
                     const assetList = [];
                     knownMarkets.forEach((name) => assetList.push({ asset: name, rsi: 50, cci: 0 }));
-                    socket.emit('scan_init', { assets: assetList });
-                    socket.emit('scan_telemetry', { results: assetList });
+                    
+                    if (session) session.scannedAssets = assetList;
+                    
+                    io.to(uid).emit('scan_init', { assets: assetList });
+                    io.to(uid).emit('scan_telemetry', { results: assetList });
 
                     // ── CONTADOR GLOBAL PARA request_id ÚNICOS Y SIMPLES ──
                     let _reqCounter = 10;
@@ -465,7 +473,15 @@ io.on('connection', (socket) => {
 
                                 console.log(`[📊] ${assetName} RSI:${rsi.toFixed(1)} CCI:${cci.toFixed(1)} | Soporte:${isAtSupport} Resist:${isAtResistance}`);
                                 
-                                scanResults.push({ asset: assetName, rsi, cci });
+                                const resObj = { asset: assetName, rsi: rsi.toFixed(1), cci: cci.toFixed(1) };
+                                scanResults.push(resObj);
+                                
+                                // Actualizar caché de sesión para restauraciones
+                                if (session && session.scannedAssets) {
+                                    const sIdx = session.scannedAssets.findIndex(a => a.asset === assetName);
+                                    if (sIdx !== -1) session.scannedAssets[sIdx] = resObj;
+                                }
+
                                 io.to(uid).emit('scan_telemetry', { results: [...scanResults] });
 
                                 let direccion = null;
@@ -483,7 +499,7 @@ io.on('connection', (socket) => {
                                     if (currentSeconds < 58) {
                                         const waitTime = (58 - currentSeconds) * 1000;
                                         console.log(`[ESPERA] ${assetName} en pre-señal. Esperando ${waitTime}ms al cierre de vela...`);
-                                        socket.emit('live_bot_update', { 
+                                        io.to(uid).emit('live_bot_update', { 
                                             phase: `⏳ Esperando cierre vela ${assetName}...`, 
                                             trades: tradesRealizados, w: wins, l: losses 
                                         });
@@ -745,8 +761,12 @@ io.on('connection', (socket) => {
                 if (userSessions.has(uid)) {
                     const existing = userSessions.get(uid);
                     if (existing.mainLoop) clearInterval(existing.mainLoop);
+                    // Preservar balances si ya existen
+                    const currentBalances = existing.balances || {demo: 0, real: 0};
+                    userSessions.set(uid, { ...existing, api, profile, mainLoop, balances: currentBalances });
+                } else {
+                    userSessions.set(uid, { api, profile, mainLoop, balances: {demo: 0, real: 0} });
                 }
-                userSessions.set(uid, { api, profile, mainLoop, balances: {demo: 0, real: 0} });
                 getRealPrices(); // Carga inicial
 
                 socket.on('disconnect', () => {
