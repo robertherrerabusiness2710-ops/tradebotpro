@@ -388,7 +388,7 @@ io.on('connection', (socket) => {
                                     active_id: activeId,
                                     size: 60,
                                     to: Math.floor(Date.now() / 1000),
-                                    count: 30
+                                    count: 200 // Incrementado a 200 para el suavizado preciso de Wilder RSI
                                 }
                             }, reqId);
                         });
