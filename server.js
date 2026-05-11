@@ -145,8 +145,8 @@ io.on('connection', (socket) => {
                     const rsiAnt2 = calcularRSI(velas.slice(0, -2), 6);
                     const rsiAct = calcularRSI(velas, 6);
                     
-                    if (rsiAct >= 70 && rsiAnt1 >= 70 && rsiAnt2 >= 70) return false; // Fuerte alza prolongada
-                    if (rsiAct <= 30 && rsiAnt1 <= 30 && rsiAnt2 <= 30) return false; // Fuerte baja prolongada
+                    if (rsiAct >= 90 && rsiAnt1 >= 90 && rsiAnt2 >= 90) return false; // Fuerte alza prolongada
+                    if (rsiAct <= 10 && rsiAnt1 <= 10 && rsiAnt2 <= 10) return false; // Fuerte baja prolongada
 
                     // 2. Revisar la acción de precio (últimas 4 velas)
                     const ultimas4 = velas.slice(-4);
@@ -449,9 +449,9 @@ io.on('connection', (socket) => {
                                 socket.emit('scan_telemetry', { results: [...scanResults] });
 
                                 let direccion = null;
-                                // ESTRATEGIA RSI+CCI (ambos confirman según Interfaz Visual)
-                                if (rsi <= 30.0 && cci <= -100.0) direccion = 'call'; // COMPRA
-                                if (rsi >= 70.0 && cci >= 100.0)  direccion = 'put';  // VENTA
+                                // ESTRATEGIA RSI+CCI (ambos confirman según Interfaz Visual del usuario)
+                                if (rsi <= 10.0 && cci <= -200.0) direccion = 'call'; // COMPRA
+                                if (rsi >= 90.0 && cci >= 200.0)  direccion = 'put';  // VENTA
 
                                 if (direccion && !esLateralizado(velasOTC)) {
                                     console.log(`[🚫 TENDENCIA] ${assetName} está en tendencia fuerte. Ignorando para buscar mercado lateralizado.`);
@@ -471,13 +471,15 @@ io.on('connection', (socket) => {
                                         
                                         // RE-VERIFICAR CONDICIONES JUSTO ANTES DE CERRAR
                                         try {
-                                            const velasConf = await api.getCandles(currentAsset, 60, 20, Date.now());
+                                            let velasConf = await api.getCandles(currentAsset, 60, 200, Date.now()); // 200 para suavizado Wilder
+                                            velasConf = velasConf.sort((a, b) => (a.from || a.id || 0) - (b.from || b.id || 0));
+                                            
                                             const rsiConf = calcularRSI(velasConf, 6);
                                             const cciConf = calcularCCI(velasConf, 14);
                                             
                                             let dirConf = null;
-                                            if (rsiConf <= 30.0 && cciConf <= -100.0) dirConf = 'call';
-                                            if (rsiConf >= 70.0 && cciConf >= 100.0)  dirConf = 'put';
+                                            if (rsiConf <= 10.0 && cciConf <= -200.0) dirConf = 'call';
+                                            if (rsiConf >= 90.0 && cciConf >= 200.0)  dirConf = 'put';
                                             
                                             if (!dirConf) {
                                                 console.log(`[CANCELADO] ${assetName} no cumplió condición al cierre (RSI:${rsiConf.toFixed(1)} CCI:${cciConf.toFixed(1)})`);
