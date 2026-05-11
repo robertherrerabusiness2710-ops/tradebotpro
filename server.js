@@ -188,9 +188,9 @@ io.on('connection', (socket) => {
                     console.log(`[MAP] Datos crudos guardados en ${rawPath}`);
 
                     const TARGETS = [
-                        'otc', 'fr 40', 'ger 30', 'hk 33', 'us 500', 'amazon',
+                        'fr 40', 'ger 30', 'hk 33', 'us 500', 'us30', 'jp225', 'amazon',
                         'bitcoin', 'btc', 'ethereum', 'eth', 'litecoin', 'ltc', 'ripple', 'xrp',
-                        'jupiter', 'tron', 'arbitrum', 'non', 'stellar', 'intel', 'polygon', 'solana'
+                        'jupiter', 'tron', 'arbitrum', 'stellar', 'intel', 'polygon', 'solana', 'pepe', 'floki', 'ronin', 'non'
                     ];
 
                     // Limpiar lista negra de divisas
@@ -246,9 +246,9 @@ io.on('connection', (socket) => {
                     try {
                         const js = JSON.parse(message.toString());
                         const TARGETS_VIVOS = [
-                            'fr 40', 'ger 30', 'hk 33', 'us 500', 'amazon',
+                            'fr 40', 'ger 30', 'hk 33', 'us 500', 'us30', 'jp225', 'amazon',
                             'bitcoin', 'btc', 'ethereum', 'eth', 'litecoin', 'ltc', 'ripple', 'xrp',
-                            'jupiter', 'tron', 'arbitrum', 'stellar', 'intel', 'polygon', 'solana', 'pepe', 'floki', 'ronin'
+                            'jupiter', 'tron', 'arbitrum', 'stellar', 'intel', 'polygon', 'solana', 'pepe', 'floki', 'ronin', 'non'
                         ];
                         const FORBIDDEN_VIVOS = ['eur','gbp','cad','jpy','aud','nzd','chf','shib','front.','-op'];
 
@@ -437,16 +437,28 @@ io.on('connection', (socket) => {
 
                                 const rsi = calcularRSI(velasOTC, 6);
                                 const cci = calcularCCI(velasOTC, 14);
+                                
+                                // CÁLCULO DE SOPORTES Y RESISTENCIAS (Canal de 20 velas)
+                                const N_SR = 20;
+                                const lastVelas = velasOTC.slice(-N_SR);
+                                const maxHigh = Math.max(...lastVelas.map(v => v.max || v.high || v.close));
+                                const minLow = Math.min(...lastVelas.map(v => v.min || v.low || v.close));
+                                const currentPrice = velasOTC[velasOTC.length - 1].close;
+                                const channelHeight = maxHigh - minLow;
+                                
+                                // Está en el 15% superior (Resistencia) o 15% inferior (Soporte) del canal reciente
+                                const isAtResistance = channelHeight === 0 || currentPrice >= maxHigh - (channelHeight * 0.15);
+                                const isAtSupport = channelHeight === 0 || currentPrice <= minLow + (channelHeight * 0.15);
 
-                                console.log(`[📊] ${assetName} RSI:${rsi.toFixed(1)} CCI:${cci.toFixed(1)}`);
+                                console.log(`[📊] ${assetName} RSI:${rsi.toFixed(1)} CCI:${cci.toFixed(1)} | Soporte:${isAtSupport} Resist:${isAtResistance}`);
                                 
                                 scanResults.push({ asset: assetName, rsi, cci });
                                 socket.emit('scan_telemetry', { results: [...scanResults] });
 
                                 let direccion = null;
-                                // ESTRATEGIA RSI+CCI (ambos confirman según Interfaz Visual del usuario)
-                                if (rsi <= 10.0 && cci <= -200.0) direccion = 'call'; // COMPRA
-                                if (rsi >= 90.0 && cci >= 200.0)  direccion = 'put';  // VENTA
+                                // ESTRATEGIA RSI+CCI + CONFIRMACIÓN S/R
+                                if (rsi <= 10.0 && cci <= -200.0 && isAtSupport) direccion = 'call'; // COMPRA (Soporte)
+                                if (rsi >= 90.0 && cci >= 200.0 && isAtResistance)  direccion = 'put';  // VENTA (Resistencia)
 
                                 if (direccion && !esLateralizado(velasOTC)) {
                                     console.log(`[🚫 TENDENCIA] ${assetName} está en tendencia fuerte. Ignorando para buscar mercado lateralizado.`);
@@ -472,12 +484,21 @@ io.on('connection', (socket) => {
                                             const rsiConf = calcularRSI(velasConf, 6);
                                             const cciConf = calcularCCI(velasConf, 14);
                                             
+                                            // RE-CHECK S/R
+                                            const lastVelasConf = velasConf.slice(-N_SR);
+                                            const maxH = Math.max(...lastVelasConf.map(v => v.max || v.high || v.close));
+                                            const minL = Math.min(...lastVelasConf.map(v => v.min || v.low || v.close));
+                                            const currP = velasConf[velasConf.length - 1].close;
+                                            const cHeight = maxH - minL;
+                                            const atResist = cHeight === 0 || currP >= maxH - (cHeight * 0.15);
+                                            const atSupp = cHeight === 0 || currP <= minL + (cHeight * 0.15);
+                                            
                                             let dirConf = null;
-                                            if (rsiConf <= 10.0 && cciConf <= -200.0) dirConf = 'call';
-                                            if (rsiConf >= 90.0 && cciConf >= 200.0)  dirConf = 'put';
+                                            if (rsiConf <= 10.0 && cciConf <= -200.0 && atSupp) dirConf = 'call';
+                                            if (rsiConf >= 90.0 && cciConf >= 200.0 && atResist)  dirConf = 'put';
                                             
                                             if (!dirConf) {
-                                                console.log(`[CANCELADO] ${assetName} no cumplió condición al cierre (RSI:${rsiConf.toFixed(1)} CCI:${cciConf.toFixed(1)})`);
+                                                console.log(`[CANCELADO] ${assetName} no cumplió condición S/R al cierre (RSI:${rsiConf.toFixed(1)} CCI:${cciConf.toFixed(1)})`);
                                                 continue;
                                             }
                                             direccion = dirConf;
