@@ -151,6 +151,25 @@ const App = () => {
         }
       });
 
+      socketRef.current.on('bot_restored_state', (data) => {
+        setIsTesting(true);
+        setBacktestPhase(data.phase || 'Restaurando Sesión...');
+        
+        // Ensure config is restored
+        const restoredConfig = { account: data.account, amount: data.amount, cycles: data.cycles };
+        setBacktestConfig(restoredConfig);
+        backtestConfigRef.current = restoredConfig;
+
+        if (data.w !== undefined) {
+          setTestResults({ 
+            wins: data.w, 
+            losses: data.l, 
+            total: data.trades, 
+            profit: (data.w * data.amount * 0.85) - (data.l * data.amount) 
+          });
+        }
+      });
+
       socketRef.current.on('live_bot_finished', (data) => {
         setIsTesting(false);
         setBacktestPhase('');

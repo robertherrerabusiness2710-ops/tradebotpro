@@ -35,19 +35,26 @@ io.on('connection', (socket) => {
 
     socket.on('auth_link', (uid) => {
         socket.join(uid);
+        const session = userSessions.get(uid);
+        if (session && session.profile) {
+            socket.emit('iq_connected', { name: session.profile.name });
+            if (session.balances) {
+                socket.emit('balance_sync', {
+                    demo: session.balances.demo.toFixed(2),
+                    real: session.balances.real.toFixed(2)
+                });
+            }
+            if (session.botActivo && session.botState) {
+                socket.emit('bot_restored_state', session.botState);
+            }
+        }
     });
 
     socket.on('connect_iq', async (data) => {
         const { uid, email, password } = data;
         console.log(`⏳ Conectando IQ para ${email}...`);
 
-        // Limpiar sesión previa para evitar fugas de memoria
-        if (userSessions.has(uid)) {
-            const prev = userSessions.get(uid);
-            if (prev.mainLoop) clearInterval(prev.mainLoop);
-            userSessions.delete(uid);
-            console.log(`[SESSION] Sesión anterior de ${uid} limpiada.`);
-        }
+        // Eliminar limpieza agresiva. La sesión perdurará aunque se refresque.
 
         try {
             const api = new IQOptionApi(email, password);
@@ -271,12 +278,13 @@ io.on('connection', (socket) => {
                 });
 
                 socket.on('start_live_bot', async (config) => {
-                    if (liveBotCiclo && liveBotCiclo.stop) liveBotCiclo.stop();
-                    liveBotCiclo = null;
+                    const session = userSessions.get(uid);
+                    if (session && session.liveBotCiclo && session.liveBotCiclo.stop) session.liveBotCiclo.stop();
+                    
                     const { account, cycles } = config;
                     const amount = Number(config.amount); // Aseguramos que sea un número real
                     if (!amount || isNaN(amount)) {
-                        return socket.emit('iq_error', { msg: 'Monto de inversión inválido' });
+                        return io.to(uid).emit('iq_error', { msg: 'Monto de inversión inválido' });
                     }
                     const maxTrades = cycles ? parseInt(cycles) : 10;
                     
@@ -408,6 +416,7 @@ io.on('connection', (socket) => {
                         const totalActivos = ACTIVOS_A_ESCANEAR.length;
                         
                         for (let idx = 0; idx < ACTIVOS_A_ESCANEAR.length; idx++) {
+                            let botActivo = session ? session.botActivo : true;
                             if (!botActivo || tradesRealizados >= maxTrades) break;
                             
                             const currentAsset = ACTIVOS_A_ESCANEAR[idx];
@@ -417,10 +426,14 @@ io.on('connection', (socket) => {
                             const failCount = deadAssets.get(currentAsset) || 0;
                             if (failCount >= 3) continue;
                             
-                            socket.emit('live_bot_update', { 
+                            io.to(uid).emit('live_bot_update', { 
                                 phase: `🔍 [${idx+1}/${totalActivos}] ${assetName}...`, 
                                 trades: tradesRealizados, w: wins, l: losses 
                             });
+
+                            if (session) {
+                                session.botState = { active: true, phase: `🔍 [${idx+1}/${totalActivos}] ${assetName}...`, trades: tradesRealizados, w: wins, l: losses, account, amount, cycles };
+                            }
 
                             try {
                                 // Obtener velas vía WebSocket directo (SIN COLA)
@@ -453,7 +466,7 @@ io.on('connection', (socket) => {
                                 console.log(`[📊] ${assetName} RSI:${rsi.toFixed(1)} CCI:${cci.toFixed(1)} | Soporte:${isAtSupport} Resist:${isAtResistance}`);
                                 
                                 scanResults.push({ asset: assetName, rsi, cci });
-                                socket.emit('scan_telemetry', { results: [...scanResults] });
+                                io.to(uid).emit('scan_telemetry', { results: [...scanResults] });
 
                                 let direccion = null;
                                 // ESTRATEGIA RSI+CCI + CONFIRMACIÓN S/R
@@ -525,7 +538,7 @@ io.on('connection', (socket) => {
 
                                     const side = direccion;
                                     console.log(`[🎯] DISPARO ${side.toUpperCase()} → ${assetName} RSI:${rsi.toFixed(1)} CCI:${cci.toFixed(1)}`);
-                                    socket.emit('live_bot_update', { 
+                                    io.to(uid).emit('live_bot_update', { 
                                         phase: `🎯 ${side.toUpperCase()} → ${assetName}`, 
                                         trades: tradesRealizados, w: wins, l: losses 
                                     });
@@ -557,7 +570,7 @@ io.on('connection', (socket) => {
                                             color: 'text-blue-400'
                                         };
                                         
-                                        socket.emit('trade_executed', tradeStatus);
+                                        io.to(uid).emit('trade_executed', tradeStatus);
                                         currentCycleTrades.push(tradeStatus);
                                         tradesRealizados++;
                                         console.log(`[✅ ORDEN OK] ${assetName} ${side.toUpperCase()} entrada:${tradeStatus.entry}`);
@@ -591,27 +604,27 @@ io.on('connection', (socket) => {
                                                         if (account === 'demo') bal.demo += profit;
                                                         else bal.real += profit;
                                                     }
-                                                    socket.emit('balance_sync', { demo: bal.demo.toFixed(2), real: bal.real.toFixed(2) });
+                                                    io.to(uid).emit('balance_sync', { demo: bal.demo.toFixed(2), real: bal.real.toFixed(2) });
                                                 }
 
                                                 if (isLoss) {
                                                     losses++;
                                                     tradeLocks.set(`${currentAsset}_cd`, Date.now() + 180000);
                                                 } else { wins++; }
-                                                socket.emit('live_trade_result', tradeStatus);
+                                                io.to(uid).emit('live_trade_result', tradeStatus);
                                             } catch (errCierre) {
                                                 console.log(`[VERIFICACION FALLIDA] ${assetName}: no se pudo obtener precio de cierre.`);
                                                 // Fallback si falla getCandles
                                                 tradeStatus.result = 'ERROR VERIF';
                                                 tradeStatus.color = 'text-yellow-400';
-                                                socket.emit('live_trade_result', tradeStatus);
+                                                io.to(uid).emit('live_trade_result', tradeStatus);
                                             }
                                         }, 65000);
 
                                     } catch(errOrder) {
                                         const em = (errOrder?.message || String(errOrder)).replace(/%!s\(MISSING\)/g,'');
                                         if (!em.includes('suspend') && !em.includes('not possible')) {
-                                            socket.emit('iq_error', { msg: `${assetName}: ${em}` });
+                                            io.to(uid).emit('iq_error', { msg: `${assetName}: ${em}` });
                                         }
                                         console.log(`[ORDEN FAIL] ${assetName}: ${em}`);
                                     }
@@ -625,26 +638,31 @@ io.on('connection', (socket) => {
                         
                         console.log(`[CICLO ✅] G:${wins} P:${losses} Disparadas:${tradesRealizados}/${maxTrades}`);
                         
+                        let botActivo = session ? session.botActivo : true;
+                        
                         if (botActivo && tradesRealizados < maxTrades) {
-                            socket.emit('live_bot_update', { 
+                            io.to(uid).emit('live_bot_update', { 
                                 phase: `⏳ Recargando en 8s... (${tradesRealizados}/${maxTrades})`,
                                 trades: tradesRealizados, w: wins, l: losses 
                             });
+                            if (session && session.botState) session.botState.phase = `⏳ Recargando en 8s... (${tradesRealizados}/${maxTrades})`;
                             setTimeout(ejecutarCiclo, 8000);
                         } else if (botActivo && tradesRealizados >= maxTrades) {
-                            socket.emit('live_bot_update', { 
+                            io.to(uid).emit('live_bot_update', { 
                                 phase: `⏳ Esperando cierre de operaciones... (${tradesRealizados}/${maxTrades})`,
                                 trades: tradesRealizados, w: wins, l: losses 
                             });
+                            if (session && session.botState) session.botState.phase = `⏳ Esperando cierre de operaciones... (${tradesRealizados}/${maxTrades})`;
                             
                             // Esperar a que el setTimeout de 65s de las operaciones termine
                             // Chequeamos cada 5s si (wins + losses) == tradesRealizados
                             const checkFinish = setInterval(() => {
-                                if (wins + losses >= tradesRealizados || !botActivo) {
+                                let bActivo = session ? session.botActivo : botActivo;
+                                if (wins + losses >= tradesRealizados || !bActivo) {
                                     clearInterval(checkFinish);
-                                    if (botActivo) {
-                                        botActivo = false;
-                                        socket.emit('live_bot_finished', { 
+                                    if (bActivo) {
+                                        if (session) session.botActivo = false;
+                                        io.to(uid).emit('live_bot_finished', { 
                                             trades: tradesRealizados, 
                                             w: wins, 
                                             l: losses,
@@ -656,7 +674,10 @@ io.on('connection', (socket) => {
                         }
                     };
 
-                    liveBotCiclo = { stop: () => { botActivo = false; } };
+                    if (session) {
+                        session.botActivo = true;
+                        session.liveBotCiclo = { stop: () => { session.botActivo = false; } };
+                    }
                     ejecutarCiclo(); // Arranca inmediatamente
 
 
@@ -706,7 +727,7 @@ io.on('connection', (socket) => {
                                        timestamp: new Date().toLocaleTimeString()
                                    });
                                    if (priceList.length === symbols.length) {
-                                       socket.emit('price_multi_update', { prices: priceList });
+                                       io.to(uid).emit('price_multi_update', { prices: priceList });
                                    }
                                } catch { /* empty */ }
                            });
@@ -721,14 +742,16 @@ io.on('connection', (socket) => {
                 };
                 
                 const mainLoop = setInterval(getRealPrices, 5000);
-                userSessions.set(uid, { api, profile, mainLoop });
+                if (userSessions.has(uid)) {
+                    const existing = userSessions.get(uid);
+                    if (existing.mainLoop) clearInterval(existing.mainLoop);
+                }
+                userSessions.set(uid, { api, profile, mainLoop, balances: {demo: 0, real: 0} });
                 getRealPrices(); // Carga inicial
 
                 socket.on('disconnect', () => {
-                    const session = userSessions.get(uid);
-                    if (session && session.mainLoop) clearInterval(session.mainLoop);
-                    userSessions.delete(uid);
-                    console.log(`[SESSION] Sesión ${uid} cerrada limpiamente.`);
+                    // No borramos la sesión en disconnect, permitimos la reconexión al recargar la página.
+                    console.log(`[SESSION] Socket desconectado. Sesión ${uid} en standby.`);
                 });
             }
         } catch (err) {
