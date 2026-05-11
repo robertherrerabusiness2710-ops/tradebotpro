@@ -299,11 +299,18 @@ io.on('connection', (socket) => {
                     const balanceSelect = balances.find(b => b.type === typeId);
                     const balanceId = balanceSelect ? balanceSelect.id : profile.balance_id;
 
-                    let tradesRealizados = 0;
-                    let wins = 0; let losses = 0;
-                    const tradeLocks = new Map(); 
-                    const currentCycleTrades = [];
-                    
+                    // Inicializar estado del bot en la sesión si no existe
+                    if (session) {
+                        session.botState = { 
+                            active: true, 
+                            phase: 'Iniciando escaneo...', 
+                            trades: 0, w: 0, l: 0, 
+                            account, amount, cycles,
+                            report: [] 
+                        };
+                        session.botActivo = true;
+                    }
+
                     // ESCÁNER: solo IDs que tenemos registrados
                     const ACTIVOS_A_ESCANEAR = [];
                     knownMarkets.forEach((name, id) => ACTIVOS_A_ESCANEAR.push(id));
@@ -340,7 +347,6 @@ io.on('connection', (socket) => {
                     knownMarkets.forEach((name) => assetList.push({ asset: name, rsi: 50, cci: 0 }));
                     
                     if (session) session.scannedAssets = assetList;
-                    
                     io.to(uid).emit('scan_init', { assets: assetList });
                     io.to(uid).emit('scan_telemetry', { results: assetList });
 
@@ -348,75 +354,53 @@ io.on('connection', (socket) => {
                     let _reqCounter = 10;
                     const nextReqId = () => ++_reqCounter;
 
-                    // ── FETCH DE VELAS VÍA WEBSOCKET DIRECTO (sin cola) ──
-                    // BUG ORIGINAL CORREGIDO: IQ Option devuelve request_id como número,
-                    // la comparación request_id === reqId fallaba (string !== number)
                     const fetchCandlesWS = (activeId) => {
                         return new Promise((resolve) => {
                             const reqId = nextReqId();
                             let done = false;
 
-                            const cleanup = () => {
-                                clearTimeout(timer);
-                                api.iqOptionWs.socket().off('message', handler);
-                            };
-
-                            const handler = (rawMsg) => {
-                                try {
-                                    const js = JSON.parse(rawMsg.toString());
-                                    // Comparar como strings para evitar number vs string mismatch
-                                    const idMatch = String(js.request_id) === String(reqId);
-                                    const nameOk  = !js.name || js.name === 'candles' ||
-                                                    js.name === 'get-candles' || js.name === 'get-candles-v2';
-                                    if (idMatch && nameOk && js.msg && !done) {
-                                        let candles = Array.isArray(js.msg) ? js.msg
-                                            : (js.msg.candles || js.msg.data || js.msg.result || []);
-                                            
-                                        // ASEGURAR ORDEN CRONOLÓGICO: 0 = más antigua, length-1 = actual/nueva
-                                        candles = candles.sort((a, b) => {
-                                            const tsA = a.from || a.id || a.at || 0;
-                                            const tsB = b.from || b.id || b.at || 0;
-                                            return tsA - tsB;
-                                        });
-                                            
-                                        done = true;
-                                        cleanup();
-                                        resolve(candles);
-                                    }
-                                } catch { /* empty */ }
-                            };
-
-                            api.iqOptionWs.socket().on('message', handler);
-
                             const timer = setTimeout(() => {
-                                if (!done) { done = true; cleanup(); resolve([]); }
-                            }, 4000); // 4s timeout por activo
-
-                            // Formato correcto V2 de IQ Option (to + count, NO from_id/to_id)
-                            api.iqOptionWs.send('sendMessage', {
-                                name: 'get-candles',
-                                version: '2.0',
-                                body: {
-                                    active_id: activeId,
-                                    size: 60,
-                                    to: Math.floor(Date.now() / 1000),
-                                    count: 200 // Incrementado a 200 para el suavizado preciso de Wilder RSI
+                                if (!done) { 
+                                    done = true; 
+                                    api.iqOptionWs.removeListener('message', handler);
+                                    resolve([]); 
                                 }
+                            }, 5000);
+
+                            const handler = (js) => {
+                                if (String(js.request_id) === String(reqId) && js.name === 'candles' && !done) {
+                                    done = true;
+                                    clearTimeout(timer);
+                                    api.iqOptionWs.removeListener('message', handler);
+                                    resolve(js.body.candles || []);
+                                }
+                            };
+
+                            api.iqOptionWs.on('message', handler);
+
+                            api.iqOptionWs.send('get-candles', { 
+                                active_id: activeId, 
+                                size: 60, 
+                                to: Math.floor(Date.now() / 1000), 
+                                count: 200 
                             }, reqId);
                         });
                     };
 
                     // Función recursiva de escaneo
-                    const ejecutarCiclo = async () => {
-                        if (!botActivo) return;
+                    const tradeLocks = new Map();
 
-                        if (tradesRealizados >= maxTrades) {
-                            botActivo = false;
-                            socket.emit('live_bot_finished', { 
-                                trades: tradesRealizados, 
-                                w: wins, 
-                                l: losses,
-                                report: currentCycleTrades
+                    const ejecutarCiclo = async () => {
+                        const s = session ? session.botState : null;
+                        if (!s || !session.botActivo) return;
+
+                        if (s.trades >= s.cycles) {
+                            session.botActivo = false;
+                            io.to(uid).emit('live_bot_finished', { 
+                                trades: s.trades, 
+                                w: s.w, 
+                                l: s.l,
+                                report: s.report
                             });
                             return;
                         }
@@ -425,42 +409,33 @@ io.on('connection', (socket) => {
                         const totalActivos = ACTIVOS_A_ESCANEAR.length;
                         
                         for (let idx = 0; idx < ACTIVOS_A_ESCANEAR.length; idx++) {
-                            let botActivo = session ? session.botActivo : true;
-                            if (!botActivo || tradesRealizados >= maxTrades) break;
+                            if (!session.botActivo || s.trades >= s.cycles) break;
                             
                             const currentAsset = ACTIVOS_A_ESCANEAR[idx];
                             const assetName = knownMarkets.get(currentAsset) || `ID:${currentAsset}`;
 
-                            // Saltar activos que fallan repetidamente
                             const failCount = deadAssets.get(currentAsset) || 0;
                             if (failCount >= 3) continue;
                             
+                            s.phase = `🔍 [${idx+1}/${totalActivos}] ${assetName}...`;
                             io.to(uid).emit('live_bot_update', { 
-                                phase: `🔍 [${idx+1}/${totalActivos}] ${assetName}...`, 
-                                trades: tradesRealizados, w: wins, l: losses 
+                                phase: s.phase, 
+                                trades: s.trades, w: s.w, l: s.l 
                             });
 
-                            if (session) {
-                                session.botState = { active: true, phase: `🔍 [${idx+1}/${totalActivos}] ${assetName}...`, trades: tradesRealizados, w: wins, l: losses, account, amount, cycles };
-                            }
-
                             try {
-                                // Obtener velas vía WebSocket directo (SIN COLA)
                                 const velasOTC = await fetchCandlesWS(currentAsset);
 
                                 if (!velasOTC || velasOTC.length < 15) {
-                                    const nf = (deadAssets.get(currentAsset) || 0) + 1;
-                                    deadAssets.set(currentAsset, nf);
-                                    console.log(`[SKIP] ${assetName}: ${velasOTC?.length || 0} velas (fallo #${nf})`);
+                                    deadAssets.set(currentAsset, (deadAssets.get(currentAsset) || 0) + 1);
                                     continue;
                                 }
 
-                                deadAssets.set(currentAsset, 0); // Éxito - reset contador
+                                deadAssets.set(currentAsset, 0);
 
                                 const rsi = calcularRSI(velasOTC, 6);
                                 const cci = calcularCCI(velasOTC, 14);
                                 
-                                // CÁLCULO DE SOPORTES Y RESISTENCIAS (Canal de 20 velas)
                                 const N_SR = 20;
                                 const lastVelas = velasOTC.slice(-N_SR);
                                 const maxHigh = Math.max(...lastVelas.map(v => v.max || v.high || v.close));
@@ -468,17 +443,13 @@ io.on('connection', (socket) => {
                                 const currentPrice = velasOTC[velasOTC.length - 1].close;
                                 const channelHeight = maxHigh - minLow;
                                 
-                                // Está en el 15% superior (Resistencia) o 15% inferior (Soporte) del canal reciente
                                 const isAtResistance = channelHeight === 0 || currentPrice >= maxHigh - (channelHeight * 0.15);
                                 const isAtSupport = channelHeight === 0 || currentPrice <= minLow + (channelHeight * 0.15);
 
-                                console.log(`[📊] ${assetName} RSI:${rsi.toFixed(1)} CCI:${cci.toFixed(1)} | Soporte:${isAtSupport} Resist:${isAtResistance}`);
-                                
                                 const resObj = { asset: assetName, rsi: rsi.toFixed(1), cci: cci.toFixed(1) };
                                 scanResults.push(resObj);
                                 
-                                // Actualizar caché de sesión para restauraciones
-                                if (session && session.scannedAssets) {
+                                if (session.scannedAssets) {
                                     const sIdx = session.scannedAssets.findIndex(a => a.asset === assetName);
                                     if (sIdx !== -1) session.scannedAssets[sIdx] = resObj;
                                 }
@@ -486,35 +457,24 @@ io.on('connection', (socket) => {
                                 io.to(uid).emit('scan_telemetry', { results: [...scanResults] });
 
                                 let direccion = null;
-                                // ESTRATEGIA RSI+CCI + CONFIRMACIÓN S/R
-                                if (rsi <= 10.0 && cci <= -200.0 && isAtSupport) direccion = 'call'; // COMPRA (Soporte)
-                                if (rsi >= 90.0 && cci >= 200.0 && isAtResistance)  direccion = 'put';  // VENTA (Resistencia)
+                                if (rsi <= 10.0 && cci <= -200.0 && isAtSupport) direccion = 'call';
+                                if (rsi >= 90.0 && cci >= 200.0 && isAtResistance)  direccion = 'put';
 
-                                if (direccion && !esLateralizado(velasOTC)) {
-                                    console.log(`[🚫 TENDENCIA] ${assetName} está en tendencia fuerte. Ignorando para buscar mercado lateralizado.`);
-                                    direccion = null;
-                                }
+                                if (direccion && !esLateralizado(velasOTC)) direccion = null;
 
                                 if (direccion) {
                                     const currentSeconds = new Date().getSeconds();
                                     if (currentSeconds < 58) {
                                         const waitTime = (58 - currentSeconds) * 1000;
-                                        console.log(`[ESPERA] ${assetName} en pre-señal. Esperando ${waitTime}ms al cierre de vela...`);
-                                        io.to(uid).emit('live_bot_update', { 
-                                            phase: `⏳ Esperando cierre vela ${assetName}...`, 
-                                            trades: tradesRealizados, w: wins, l: losses 
-                                        });
+                                        s.phase = `⏳ Esperando cierre vela ${assetName}...`;
+                                        io.to(uid).emit('live_bot_update', { phase: s.phase, trades: s.trades, w: s.w, l: s.l });
                                         await new Promise(r => setTimeout(r, waitTime));
                                         
-                                        // RE-VERIFICAR CONDICIONES JUSTO ANTES DE CERRAR
                                         try {
-                                            let velasConf = await api.getCandles(currentAsset, 60, 200, Date.now()); // 200 para suavizado Wilder
+                                            let velasConf = await api.getCandles(currentAsset, 60, 200, Date.now());
                                             velasConf = velasConf.sort((a, b) => (a.from || a.id || 0) - (b.from || b.id || 0));
-                                            
                                             const rsiConf = calcularRSI(velasConf, 6);
                                             const cciConf = calcularCCI(velasConf, 14);
-                                            
-                                            // RE-CHECK S/R
                                             const lastVelasConf = velasConf.slice(-N_SR);
                                             const maxH = Math.max(...lastVelasConf.map(v => v.max || v.high || v.close));
                                             const minL = Math.min(...lastVelasConf.map(v => v.min || v.low || v.close));
@@ -527,164 +487,73 @@ io.on('connection', (socket) => {
                                             if (rsiConf <= 10.0 && cciConf <= -200.0 && atSupp) dirConf = 'call';
                                             if (rsiConf >= 90.0 && cciConf >= 200.0 && atResist)  dirConf = 'put';
                                             
-                                            if (!dirConf) {
-                                                console.log(`[CANCELADO] ${assetName} no cumplió condición S/R al cierre (RSI:${rsiConf.toFixed(1)} CCI:${cciConf.toFixed(1)})`);
-                                                continue;
-                                            }
+                                            if (!dirConf) continue;
                                             direccion = dirConf;
                                             
-                                            // Esperar hasta el segundo 00 de la nueva vela
                                             const finalWait = (60 - new Date().getSeconds()) * 1000;
                                             if (finalWait > 0) await new Promise(r => setTimeout(r, finalWait));
-                                            
-                                        } catch(e) {
-                                            console.log(`[ERR RE-CHECK] ${assetName}`);
-                                            continue;
-                                        }
+                                        } catch(e) { continue; }
                                     }
 
-                                    const ultimaVela  = velasOTC[velasOTC.length - 1];
-                                    const velaTs  = ultimaVela.from || ultimaVela.id || ultimaVela.at || Date.now();
-                                    const lockId  = `${currentAsset}_${velaTs}`;
-                                    const cooldown = tradeLocks.get(`${currentAsset}_cd`) || 0;
-                                    
-                                    if (tradeLocks.has(lockId) || Date.now() < cooldown) {
-                                        console.log(`[LOCK] ${assetName}: Vela ya usada.`);
-                                        continue;
-                                    }
+                                    const lockId = `${currentAsset}_${Date.now()}`;
+                                    if (tradeLocks.has(lockId)) continue;
 
                                     const side = direccion;
-                                    console.log(`[🎯] DISPARO ${side.toUpperCase()} → ${assetName} RSI:${rsi.toFixed(1)} CCI:${cci.toFixed(1)}`);
-                                    io.to(uid).emit('live_bot_update', { 
-                                        phase: `🎯 ${side.toUpperCase()} → ${assetName}`, 
-                                        trades: tradesRealizados, w: wins, l: losses 
-                                    });
+                                    s.phase = `🎯 ${side.toUpperCase()} → ${assetName}`;
+                                    io.to(uid).emit('live_bot_update', { phase: s.phase, trades: s.trades, w: s.w, l: s.l });
                                     tradeLocks.set(lockId, true);
 
                                     try {
-                                        const order = await api.sendOrderBinary(
-                                            currentAsset, side, iqOptionExpired(1), balanceId, 0, amount
-                                        );
-                                        
-                                        // Extraer el precio REAL de mercado al inicio de la vela
-                                        let entryPrice = ultimaVela.close;
-                                        try {
-                                            const postVelas = await api.getCandles(currentAsset, 60, 1, Date.now());
-                                            if (postVelas && postVelas.length > 0) {
-                                                entryPrice = postVelas[postVelas.length - 1].open;
-                                            }
-                                        } catch (e) { /* fallback a ultimaVela.close */ }
-                                        
+                                        const order = await api.sendOrderBinary(currentAsset, side, iqOptionExpired(1), balanceId, 0, amount);
                                         const tradeStatus = {
-                                            id: Date.now(),
-                                            asset: assetName,
-                                            side: side.toUpperCase(),
-                                            entry: entryPrice,
-                                            rsi: rsi.toFixed(1),
-                                            cci: cci.toFixed(1),
+                                            id: Date.now(), asset: assetName, side: side.toUpperCase(),
+                                            entry: velasOTC[velasOTC.length-1].close,
+                                            rsi: rsi.toFixed(1), cci: cci.toFixed(1),
                                             time: new Date().toLocaleTimeString(),
-                                            result: 'PROCESANDO...',
-                                            color: 'text-blue-400'
+                                            result: 'PROCESANDO...', color: 'text-blue-400'
                                         };
-                                        
                                         io.to(uid).emit('trade_executed', tradeStatus);
-                                        currentCycleTrades.push(tradeStatus);
-                                        tradesRealizados++;
-                                        console.log(`[✅ ORDEN OK] ${assetName} ${side.toUpperCase()} entrada:${tradeStatus.entry}`);
+                                        s.report.push(tradeStatus);
+                                        s.trades++;
 
                                         setTimeout(async () => {
                                             try {
                                                 let velasCierre = await api.getCandles(currentAsset, 60, 4, Date.now());
                                                 velasCierre = velasCierre.sort((a, b) => (a.from || a.id || 0) - (b.from || b.id || 0));
+                                                const vCierre = velasCierre[velasCierre.length - 2];
+                                                const vEntrada = velasCierre[velasCierre.length - 3];
+                                                const win = side === 'call' ? vCierre.close > vEntrada.close : vCierre.close < vEntrada.close;
                                                 
-                                                // La vela en curso es length-1. La vela que acaba de cerrar (donde operamos) es length-2.
-                                                const finalPrice = velasCierre[velasCierre.length - 2].close;
-                                                
-                                                let isLoss = true;
-                                                if (side === 'call' && finalPrice > entryPrice) isLoss = false;
-                                                if (side === 'put' && finalPrice < entryPrice) isLoss = false;
-                                                // Si es empate, lo tomamos como pérdida en binarias usualmente, o podemos omitir.
-                                                
-                                                tradeStatus.result = isLoss ? 'PERDIDA' : 'GANADA';
-                                                tradeStatus.color = isLoss ? 'text-red-400' : 'text-green-400';
-                                                tradeStatus.winner = !isLoss;
-                                                
-                                                // Actualizar balance simulado local y emitirlo
-                                                const sess = userSessions.get(uid);
-                                                if (sess && sess.balances) {
-                                                    const bal = sess.balances;
-                                                    if (isLoss) {
-                                                        if (account === 'demo') bal.demo -= amount;
-                                                        else bal.real -= amount;
-                                                    } else {
-                                                        const profit = amount * 0.85; // Aprox ganancia binaria
-                                                        if (account === 'demo') bal.demo += profit;
-                                                        else bal.real += profit;
-                                                    }
-                                                    io.to(uid).emit('balance_sync', { demo: bal.demo.toFixed(2), real: bal.real.toFixed(2) });
-                                                }
-
-                                                if (isLoss) {
-                                                    losses++;
-                                                    tradeLocks.set(`${currentAsset}_cd`, Date.now() + 180000);
-                                                } else { wins++; }
+                                                if (win) s.w++; else s.l++;
+                                                tradeStatus.result = win ? 'GANADA ✅' : 'PERDIDA ❌';
+                                                tradeStatus.color = win ? 'text-green-400' : 'text-red-400';
                                                 io.to(uid).emit('live_trade_result', tradeStatus);
-                                            } catch (errCierre) {
-                                                console.log(`[VERIFICACION FALLIDA] ${assetName}: no se pudo obtener precio de cierre.`);
-                                                // Fallback si falla getCandles
-                                                tradeStatus.result = 'ERROR VERIF';
-                                                tradeStatus.color = 'text-yellow-400';
+                                            } catch (err) {
+                                                tradeStatus.result = 'FINALIZADA';
                                                 io.to(uid).emit('live_trade_result', tradeStatus);
                                             }
                                         }, 65000);
-
                                     } catch(errOrder) {
-                                        const em = (errOrder?.message || String(errOrder)).replace(/%!s\(MISSING\)/g,'');
-                                        if (!em.includes('suspend') && !em.includes('not possible')) {
-                                            io.to(uid).emit('iq_error', { msg: `${assetName}: ${em}` });
-                                        }
-                                        console.log(`[ORDEN FAIL] ${assetName}: ${em}`);
+                                        io.to(uid).emit('iq_error', { msg: `${assetName}: Orden fallida` });
                                     }
                                 }
-                            } catch(e) {
-                                console.log(`[ERR] ${assetName}: ${e?.message}`);
-                            }
-                            
-                            await new Promise(r => setTimeout(r, 200)); // Pausa mínima entre activos
+                            } catch(e) { /* ignore loop error */ }
+                            await new Promise(r => setTimeout(r, 200));
                         }
                         
-                        console.log(`[CICLO ✅] G:${wins} P:${losses} Disparadas:${tradesRealizados}/${maxTrades}`);
-                        
-                        let botActivo = session ? session.botActivo : true;
-                        
-                        if (botActivo && tradesRealizados < maxTrades) {
-                            io.to(uid).emit('live_bot_update', { 
-                                phase: `⏳ Recargando en 8s... (${tradesRealizados}/${maxTrades})`,
-                                trades: tradesRealizados, w: wins, l: losses 
-                            });
-                            if (session && session.botState) session.botState.phase = `⏳ Recargando en 8s... (${tradesRealizados}/${maxTrades})`;
+                        if (session.botActivo && s.trades < s.cycles) {
+                            s.phase = `⏳ Recargando en 8s... (${s.trades}/${s.cycles})`;
+                            io.to(uid).emit('live_bot_update', { phase: s.phase, trades: s.trades, w: s.w, l: s.l });
                             setTimeout(ejecutarCiclo, 8000);
-                        } else if (botActivo && tradesRealizados >= maxTrades) {
-                            io.to(uid).emit('live_bot_update', { 
-                                phase: `⏳ Esperando cierre de operaciones... (${tradesRealizados}/${maxTrades})`,
-                                trades: tradesRealizados, w: wins, l: losses 
-                            });
-                            if (session && session.botState) session.botState.phase = `⏳ Esperando cierre de operaciones... (${tradesRealizados}/${maxTrades})`;
-                            
-                            // Esperar a que el setTimeout de 65s de las operaciones termine
-                            // Chequeamos cada 5s si (wins + losses) == tradesRealizados
+                        } else if (session.botActivo && s.trades >= s.cycles) {
+                            s.phase = `⏳ Esperando cierre de operaciones...`;
+                            io.to(uid).emit('live_bot_update', { phase: s.phase, trades: s.trades, w: s.w, l: s.l });
                             const checkFinish = setInterval(() => {
-                                let bActivo = session ? session.botActivo : botActivo;
-                                if (wins + losses >= tradesRealizados || !bActivo) {
+                                if (s.w + s.l >= s.trades || !session.botActivo) {
                                     clearInterval(checkFinish);
-                                    if (bActivo) {
-                                        if (session) session.botActivo = false;
-                                        io.to(uid).emit('live_bot_finished', { 
-                                            trades: tradesRealizados, 
-                                            w: wins, 
-                                            l: losses,
-                                            report: currentCycleTrades
-                                        });
+                                    if (session.botActivo) {
+                                        session.botActivo = false;
+                                        io.to(uid).emit('live_bot_finished', { trades: s.trades, w: s.w, l: s.l, report: s.report });
                                     }
                                 }
                             }, 5000);
