@@ -548,8 +548,11 @@ io.on('connection', (socket) => {
 
                                         setTimeout(async () => {
                                             try {
-                                                const velasCierre = await api.getCandles(currentAsset, 60, 2, Date.now());
-                                                const finalPrice = velasCierre[velasCierre.length - 1].close;
+                                                let velasCierre = await api.getCandles(currentAsset, 60, 4, Date.now());
+                                                velasCierre = velasCierre.sort((a, b) => (a.from || a.id || 0) - (b.from || b.id || 0));
+                                                
+                                                // La vela en curso es length-1. La vela que acaba de cerrar (donde operamos) es length-2.
+                                                const finalPrice = velasCierre[velasCierre.length - 2].close;
                                                 
                                                 let isLoss = true;
                                                 if (side === 'call' && finalPrice > entryPrice) isLoss = false;
