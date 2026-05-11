@@ -34,6 +34,7 @@ io.on('connection', (socket) => {
     console.log('🔌 Cliente Conectado:', socket.id);
 
     socket.on('auth_link', (uid) => {
+        console.log(`[AUTH] Solicitud de reconexión para UID: ${uid}`);
         socket.join(uid);
         socket.uid = uid;
         const session = userSessions.get(uid);
