@@ -246,11 +246,11 @@ io.on('connection', (socket) => {
                     try {
                         const js = JSON.parse(message.toString());
                         const TARGETS_VIVOS = [
-                            'otc', 'fr 40', 'ger 30', 'hk 33', 'us 500', 'amazon',
+                            'fr 40', 'ger 30', 'hk 33', 'us 500', 'amazon',
                             'bitcoin', 'btc', 'ethereum', 'eth', 'litecoin', 'ltc', 'ripple', 'xrp',
-                            'jupiter', 'tron', 'arbitrum', 'non', 'stellar', 'intel', 'polygon', 'solana'
+                            'jupiter', 'tron', 'arbitrum', 'stellar', 'intel', 'polygon', 'solana', 'pepe', 'floki', 'ronin'
                         ];
-                        const FORBIDDEN_VIVOS = ['eur/','gbp/','usd/cad','usd/jpy'];
+                        const FORBIDDEN_VIVOS = ['eur','gbp','cad','jpy','aud','nzd','chf','shib','front.','-op'];
 
                         const insts = js.msg?.instruments || js.msg?.data ||
                             (Array.isArray(js.msg) ? js.msg : null);
@@ -259,11 +259,6 @@ io.on('connection', (socket) => {
                             const n = (inst.name || inst.active_name || '').toLowerCase();
                             const id = inst.active_id || inst.id;
                             if (!n || !id) return;
-                            
-                            // Ignorar corruptos y divisas estándar no OTC
-                            if (n.includes('front.') || n.includes('-op') || n.includes('usd')) {
-                                if (!n.includes('otc')) return;
-                            }
                             
                             if (FORBIDDEN_VIVOS.some(f => n.includes(f))) return;
                             
