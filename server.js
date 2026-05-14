@@ -309,6 +309,7 @@ io.on('connection', (socket) => {
                             report: [] 
                         };
                         session.botActivo = true;
+                        session.scannedAssets = []; // Reset al empezar
                     }
 
                     // ESCÁNER: solo IDs que tenemos registrados
@@ -342,13 +343,19 @@ io.on('connection', (socket) => {
                     liveBotCiclo = true;
                     let botActivo = true;
 
-                    // Emitir lista inicial al frontend para mostrar todas las barras
-                    const assetList = [];
-                    knownMarkets.forEach((name) => assetList.push({ asset: name, rsi: 50, cci: 0 }));
+                    const initialAssets = [];
+                    knownMarkets.forEach((name) => initialAssets.push({ asset: name, rsi: '--', cci: '--', progress: 0 }));
+                    if (session) session.scannedAssets = initialAssets;
+                    io.to(uid).emit('scan_init', { assets: initialAssets });
                     
-                    if (session) session.scannedAssets = assetList;
-                    io.to(uid).emit('scan_init', { assets: assetList });
-                    io.to(uid).emit('scan_telemetry', { results: assetList });
+                    const updateScannedAssets = (assetName, rsi, cci, progress = 0) => {
+                        if (!session) return;
+                        if (!session.scannedAssets) session.scannedAssets = [];
+                        const idx = session.scannedAssets.findIndex(a => a.asset === assetName);
+                        const res = { asset: assetName, rsi, cci, progress, ts: Date.now() };
+                        if (idx !== -1) session.scannedAssets[idx] = res;
+                        else session.scannedAssets.push(res);
+                    };
 
                     // ── CONTADOR GLOBAL PARA request_id ÚNICOS Y SIMPLES ──
                     let _reqCounter = 10;
@@ -446,15 +453,20 @@ io.on('connection', (socket) => {
                                 const isAtResistance = channelHeight === 0 || currentPrice >= maxHigh - (channelHeight * 0.15);
                                 const isAtSupport = channelHeight === 0 || currentPrice <= minLow + (channelHeight * 0.15);
 
-                                const resObj = { asset: assetName, rsi: rsi.toFixed(1), cci: cci.toFixed(1) };
-                                scanResults.push(resObj);
-                                
-                                if (session.scannedAssets) {
-                                    const sIdx = session.scannedAssets.findIndex(a => a.asset === assetName);
-                                    if (sIdx !== -1) session.scannedAssets[sIdx] = resObj;
-                                }
+                                // Calcular cercanía a la señal (0-100) para la barra de progreso
+                                // RSI ideal: <=10 o >=90. CCI ideal: <=-200 o >=200.
+                                const rsiScore = rsi >= 90 || rsi <= 10 ? 100 : Math.min(100, (Math.abs(rsi - 50) / 40) * 100);
+                                const cciScore = Math.abs(cci) >= 200 ? 100 : Math.min(100, (Math.abs(cci) / 200) * 100);
+                                const totalScore = ((rsiScore + cciScore) / 2).toFixed(0);
 
-                                io.to(uid).emit('scan_telemetry', { results: [...scanResults] });
+                                const resObj = { 
+                                    asset: assetName, 
+                                    rsi: rsi.toFixed(1), 
+                                    cci: cci.toFixed(1),
+                                    progress: totalScore 
+                                };
+                                updateScannedAssets(assetName, resObj.rsi, resObj.cci, resObj.progress);
+                                io.to(uid).emit('scan_telemetry', { results: session.scannedAssets });
 
                                 let direccion = null;
                                 if (rsi <= 10.0 && cci <= -200.0 && isAtSupport) direccion = 'call';
@@ -466,7 +478,7 @@ io.on('connection', (socket) => {
                                     const currentSeconds = new Date().getSeconds();
                                     if (currentSeconds < 58) {
                                         const waitTime = (58 - currentSeconds) * 1000;
-                                        s.phase = `⏳ Esperando cierre vela ${assetName}...`;
+                                        s.phase = `⏳ ESPERANDO CIERRE VELA ${assetName} PARA ENTRAR...`;
                                         io.to(uid).emit('live_bot_update', { phase: s.phase, trades: s.trades, w: s.w, l: s.l });
                                         await new Promise(r => setTimeout(r, waitTime));
                                         
