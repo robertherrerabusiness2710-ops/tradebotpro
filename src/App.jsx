@@ -24,7 +24,8 @@ const App = () => {
   const [balances, setBalances] = useState({ real: '0.00', demo: '0.00' });
   const [logs, setLogs] = useState([]);
   const [socketStatus, setSocketStatus] = useState('offline');
-  const [isLinking, setIsLinking] = useState(false);
+   const [isLinking, setIsLinking] = useState(false);
+  const [brokerConnected, setBrokerConnected] = useState(false);
   const [successMsg, setSuccessMsg] = useState('');
   
   // ESTADOS DE ESTRATEGIA (RSI + CCI)
@@ -93,6 +94,7 @@ const App = () => {
       socketRef.current.on('iq_connected', (data) => {
         addLog(`✅ Broker conectado como: ${data.name}`);
         setIsLinking(false);
+        setBrokerConnected(true);
         setSuccessMsg("¡VINCULACION EXITOSA! 🎉");
         setTimeout(() => setSuccessMsg(''), 5000);
       });
@@ -343,7 +345,7 @@ const App = () => {
             <LogOut className="w-6 h-6" />
             <span className="hidden md:block">LOGOUT</span>
           </button>
-          <div className="mt-4 text-[9px] text-gray-600 font-mono text-center tracking-tighter uppercase">SYSTEM v6.2 - ROBERT EDITION</div>
+          <div className="mt-4 text-[9px] text-gray-600 font-mono text-center tracking-tighter uppercase">SYSTEM v6.4 - TOTAL MOTOR REFACTOR</div>
         </div>
       </aside>
 
@@ -632,14 +634,12 @@ const App = () => {
                            ) : (
                              scanTelemetry.map((item, idx) => {
                                // Porcentaje hacia sobrecompra (RSI > 50) o sobreventa (RSI < 50)
-                               const rsiDist = item.rsi > 50
-                                 ? Math.min(100, ((item.rsi - 50) / 20) * 100)  // hacia sobrecompra (PUT)
-                                 : Math.min(100, ((50 - item.rsi) / 20) * 100); // hacia sobreventa (CALL)
-                               const cciDist = Math.min(100, (Math.abs(item.cci) / 80) * 100);
-                               const total = Math.min(99, (rsiDist + cciDist) / 2).toFixed(0);
-                               const isReady = item.rsi !== 50 && (Number(total) >= 95);
-                               const isScanning = item.rsi === 50 && item.cci === 0; // Aún no escaneado
-                               const direction = item.rsi >= 70 ? 'PUT 🔴' : item.rsi <= 30 ? 'CALL 🟢' : '';
+                               const total = item.progress || 0;
+                               const isReady = Number(total) >= 95;
+                               const rsiVal = Number(item.rsi);
+                               const cciVal = Number(item.cci);
+                               const isScanning = item.rsi === '--'; 
+                               const direction = rsiVal >= 90 ? 'VENTA 🔴' : rsiVal <= 10 ? 'COMPRA 🟢' : '';
 
                                return (
                                  <div key={idx} className={`bg-[#080b13] p-4 rounded-2xl border transition-all ${isReady ? 'border-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.3)] scale-[1.02]' : 'border-white/5'}`}>
@@ -656,8 +656,8 @@ const App = () => {
                                        />
                                     </div>
                                     <div className="flex justify-between mt-2">
-                                       <span className="text-[8px] font-bold text-gray-600 uppercase">RSI: {item.rsi === 50 && item.cci === 0 ? '--' : item.rsi.toFixed(1)}</span>
-                                       <span className="text-[8px] font-bold text-gray-600 uppercase">CCI: {item.rsi === 50 && item.cci === 0 ? '--' : item.cci.toFixed(1)}</span>
+                                       <span className="text-[8px] font-bold text-gray-600 uppercase">RSI: {item.rsi}</span>
+                                       <span className="text-[8px] font-bold text-gray-600 uppercase">CCI: {item.cci}</span>
                                     </div>
                                  </div>
                                );
@@ -759,14 +759,14 @@ const App = () => {
                            />
                         </div>
                         <button 
-                          disabled={isLinking || socketStatus === 'offline'}
+                          disabled={isLinking || socketStatus === 'offline' || brokerConnected}
                           className={`w-full py-6 rounded-3xl font-black text-xl transition-all ${
-                            isLinking || socketStatus === 'offline' 
-                            ? 'bg-gray-800 text-gray-600 cursor-not-allowed' 
+                            (isLinking || socketStatus === 'offline' || brokerConnected)
+                            ? 'bg-gray-800 text-gray-500 cursor-not-allowed' 
                             : 'bg-green-600 hover:bg-green-500 text-white shadow-xl active:scale-95'
                           }`}
                         >
-                          {isLinking ? 'SINCRONIZANDO...' : 'VINCULAR CLOUD BROKER'}
+                          {isLinking ? 'SINCRONIZANDO...' : brokerConnected ? 'BROKER VINCULADO ✅' : 'VINCULAR CLOUD BROKER'}
                         </button>
                     </form>
                  </div>
