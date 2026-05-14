@@ -329,9 +329,16 @@ io.on('connection', (socket) => {
                             { id: 1001, name: 'Apple (OTC)' }, { id: 1002, name: 'Google (OTC)' },
                             { id: 1003, name: 'Facebook (OTC)' }, { id: 1004, name: 'Netflix (OTC)' },
                             { id: 1005, name: 'Tesla (OTC)' }, { id: 1006, name: 'Twitter (OTC)' },
+                            { id: 1007, name: 'Microsoft (OTC)' }, { id: 1008, name: 'Alibaba (OTC)' },
+                            { id: 1009, name: 'Baidu (OTC)' }, { id: 1010, name: 'Intel (OTC)' },
+                            { id: 1011, name: 'Boeing (OTC)' }, { id: 1012, name: 'Coca-Cola (OTC)' },
                             { id: 76, name: 'EUR/USD (OTC)' }, { id: 77, name: 'GBP/USD (OTC)' },
                             { id: 78, name: 'USD/JPY (OTC)' }, { id: 81, name: 'EUR/GBP (OTC)' },
-                            { id: 943, name: 'AUD/USD (OTC)' }, { id: 944, name: 'NZD/USD (OTC)' }
+                            { id: 943, name: 'AUD/USD (OTC)' }, { id: 944, name: 'NZD/USD (OTC)' },
+                            { id: 945, name: 'USD/CAD (OTC)' }, { id: 946, name: 'USD/CHF (OTC)' },
+                            { id: 947, name: 'EUR/JPY (OTC)' }, { id: 948, name: 'GBP/JPY (OTC)' },
+                            { id: 100000, name: 'US 500 (IND)' }, { id: 100001, name: 'GER 30 (IND)' },
+                            { id: 100002, name: 'FR 40 (IND)' }, { id: 100003, name: 'HK 33 (IND)' }
                         ];
                         fallbackActivos.forEach(act => {
                             if (!knownMarkets.has(act.id)) {
