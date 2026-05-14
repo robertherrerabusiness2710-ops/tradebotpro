@@ -53,6 +53,12 @@ io.on('connection', (socket) => {
                     socket.emit('scan_telemetry', { results: session.scannedAssets });
                 }
                 socket.emit('bot_restored_state', { ...session.botState, phase: session.botState.phase });
+                
+                // ASEGURAR QUE EL MOTOR ESTÉ CORRIENDO
+                if (!session.isLooping) {
+                    console.log(`[RECOVERY] Reiniciando motor para ${uid}`);
+                    iniciarMotorBot(uid, session);
+                }
             }
         }
     });
@@ -212,11 +218,9 @@ io.on('connection', (socket) => {
 
                     const tryRegister = (id, name) => {
                         if (!id || !name) return;
-                        const n = name.toLowerCase();
+                        let n = name.toLowerCase();
                         
-                        // Prevención de activos corruptos y divisas estándar no OTC (front.*)
                         if (n.includes('front.') || n.includes('-op') || n.includes('usd')) {
-                            // Solo permitir OTC o indices puros
                             if (!n.includes('otc')) return;
                         }
                         
@@ -225,8 +229,9 @@ io.on('connection', (socket) => {
                         
                         const isTarget = TARGETS.some(t => n.includes(t));
                         if (isTarget && !knownMarkets.has(Number(id))) {
-                            knownMarkets.set(Number(id), name);
-                            console.log(`[✅ MAPA] Activo Cripto registrado: "${name}" → ID: ${id}`);
+                            let cleanName = name.replace('front.', '').replace('binary-', '').replace('-OTC', ' (OTC)').toUpperCase();
+                            knownMarkets.set(Number(id), cleanName);
+                            console.log(`[✅ MAPA] Activo registrado: "${cleanName}" → ID: ${id}`);
                         }
                     };
 
@@ -286,310 +291,156 @@ io.on('connection', (socket) => {
 
                 socket.on('start_live_bot', async (config) => {
                     const session = userSessions.get(uid);
-                    if (session && session.liveBotCiclo && session.liveBotCiclo.stop) session.liveBotCiclo.stop();
+                    if (!session) return;
                     
-                    const { account, cycles } = config;
-                    const amount = Number(config.amount); // Aseguramos que sea un número real
-                    if (!amount || isNaN(amount)) {
-                        return io.to(uid).emit('iq_error', { msg: 'Monto de inversión inválido' });
+                    if (session.botActivo) {
+                        session.botActivo = false;
+                        if (session.botTimeout) clearTimeout(session.botTimeout);
                     }
-                    const maxTrades = cycles ? parseInt(cycles) : 10;
-                    
+
+                    const { account, cycles } = config;
+                    const amount = Number(config.amount) || 10;
+                    const api = session.api;
+                    const profile = session.profile;
+
                     const balances = profile.balances || [];
                     const typeId = account === 'real' ? 1 : 4;
                     const balanceSelect = balances.find(b => b.type === typeId);
                     const balanceId = balanceSelect ? balanceSelect.id : profile.balance_id;
 
-                    // Inicializar estado del bot en la sesión si no existe
-                    if (session) {
-                        session.botState = { 
-                            active: true, 
-                            phase: 'Iniciando escaneo...', 
-                            trades: 0, w: 0, l: 0, 
-                            account, amount, cycles,
-                            report: [] 
-                        };
-                        session.botActivo = true;
-                        session.scannedAssets = []; // Reset al empezar
-                    }
+                    session.botState = { 
+                        active: true, phase: 'Iniciando escaneo...', 
+                        trades: 0, w: 0, l: 0, account, amount, cycles, report: [] 
+                    };
+                    session.botActivo = true;
+                    session.scannedAssets = [];
+                    session.isLooping = false;
 
-                    // ESCÁNER: solo IDs que tenemos registrados
-                    const ACTIVOS_A_ESCANEAR = [];
-                    knownMarkets.forEach((name, id) => ACTIVOS_A_ESCANEAR.push(id));
+                    iniciarMotorBot(uid, session, balanceId, amount);
+                });
 
-                    // 🛡️ SISTEMA DE RESPALDO (FALLBACK)
-                    // Si el broker no envió la lista de activos a tiempo, forzamos los IDs principales de cripto
-                    if (ACTIVOS_A_ESCANEAR.length === 0) {
-                        console.log(`[BOT WARNING] Usando catálogo de emergencia v6.4...`);
-                        const fallbackActivos = [
-                            { id: 816, name: 'Bitcoin (OTC)' }, { id: 817, name: 'Ethereum (OTC)' },
-                            { id: 1072, name: 'Ripple (OTC)' }, { id: 1073, name: 'Solana (OTC)' },
-                            { id: 994, name: 'TRON (OTC)' }, { id: 1074, name: 'Binance Coin (OTC)' },
-                            { id: 993, name: 'Dogecoin (OTC)' }, { id: 1000, name: 'Amazon (OTC)' },
-                            { id: 1001, name: 'Apple (OTC)' }, { id: 1002, name: 'Google (OTC)' },
-                            { id: 1003, name: 'Facebook (OTC)' }, { id: 1004, name: 'Netflix (OTC)' },
-                            { id: 1005, name: 'Tesla (OTC)' }, { id: 1006, name: 'Twitter (OTC)' },
-                            { id: 1007, name: 'Microsoft (OTC)' }, { id: 1008, name: 'Alibaba (OTC)' },
-                            { id: 1009, name: 'Baidu (OTC)' }, { id: 1010, name: 'Intel (OTC)' },
-                            { id: 1011, name: 'Boeing (OTC)' }, { id: 1012, name: 'Coca-Cola (OTC)' },
-                            { id: 76, name: 'EUR/USD (OTC)' }, { id: 77, name: 'GBP/USD (OTC)' },
-                            { id: 78, name: 'USD/JPY (OTC)' }, { id: 81, name: 'EUR/GBP (OTC)' },
-                            { id: 943, name: 'AUD/USD (OTC)' }, { id: 944, name: 'NZD/USD (OTC)' },
-                            { id: 945, name: 'USD/CAD (OTC)' }, { id: 946, name: 'USD/CHF (OTC)' },
-                            { id: 947, name: 'EUR/JPY (OTC)' }, { id: 948, name: 'GBP/JPY (OTC)' },
-                            { id: 100000, name: 'US 500 (IND)' }, { id: 100001, name: 'GER 30 (IND)' },
-                            { id: 100002, name: 'FR 40 (IND)' }, { id: 100003, name: 'HK 33 (IND)' }
-                        ];
-                        fallbackActivos.forEach(act => {
-                            if (!knownMarkets.has(act.id)) {
-                                knownMarkets.set(act.id, act.name);
-                                ACTIVOS_A_ESCANEAR.push(act.id);
-                            }
-                        });
-                    }
-
-                    socket.emit('live_bot_update', { phase: `🔍 Activos listos: ${ACTIVOS_A_ESCANEAR.length} | Iniciando escaneo RSI+CCI...`, trades: 0, w: 0, l: 0 });
-
-                    console.log(`[BOT] Iniciando. Activos a escanear (${ACTIVOS_A_ESCANEAR.length}):`, 
-                        ACTIVOS_A_ESCANEAR.map(id => `${id}=${knownMarkets.get(id)||'?'}`).join(', '));
-
-                    liveBotCiclo = true;
-                    let botActivo = true;
-
-                    const initialAssets = [];
-                    knownMarkets.forEach((name) => initialAssets.push({ asset: name, rsi: '--', cci: '--', progress: 0 }));
-                    if (session) session.scannedAssets = initialAssets;
-                    io.to(uid).emit('scan_init', { assets: initialAssets });
+                function iniciarMotorBot(uid, session, balanceId, amount) {
+                    if (session.isLooping) return;
+                    session.isLooping = true;
                     
-                    const updateScannedAssets = (assetName, rsi, cci, progress = 0) => {
-                        if (!session) return;
-                        if (!session.scannedAssets) session.scannedAssets = [];
-                        const idx = session.scannedAssets.findIndex(a => a.asset === assetName);
-                        const res = { asset: assetName, rsi, cci, progress, ts: Date.now() };
-                        if (idx !== -1) session.scannedAssets[idx] = res;
-                        else session.scannedAssets.push(res);
-                    };
+                    const api = session.api;
+                    const deadAssets = new Map();
 
-                    // ── CONTADOR GLOBAL PARA request_id ÚNICOS Y SIMPLES ──
-                    let _reqCounter = 10;
-                    const nextReqId = () => ++_reqCounter;
-
-                    const fetchCandlesWS = (activeId) => {
+                    const fetchCandlesSafe = (activeId) => {
                         return new Promise((resolve) => {
-                            const reqId = nextReqId();
-                            let done = false;
-
-                            const timer = setTimeout(() => {
-                                if (!done) { 
-                                    done = true; 
-                                    api.iqOptionWs.removeListener('message', handler);
-                                    resolve([]); 
-                                }
-                            }, 5000);
-
-                            const handler = (js) => {
-                                if (String(js.request_id) === String(reqId) && js.name === 'candles' && !done) {
-                                    done = true;
-                                    clearTimeout(timer);
-                                    api.iqOptionWs.removeListener('message', handler);
-                                    resolve(js.body.candles || []);
-                                }
+                            const reqId = Date.now() + Math.floor(Math.random() * 1000);
+                            const t = setTimeout(() => { api.iqOptionWs.removeListener('message', h); resolve(null); }, 5000);
+                            const h = (m) => {
+                                try {
+                                    const js = JSON.parse(m.toString());
+                                    if (js.name === 'candles' && js.request_id === String(reqId)) {
+                                        clearTimeout(t);
+                                        api.iqOptionWs.removeListener('message', h);
+                                        resolve((js.msg.data || []).sort((a,b)=>a.from-b.from));
+                                    }
+                                } catch(e){}
                             };
-
-                            api.iqOptionWs.on('message', handler);
-
-                            api.iqOptionWs.send('get-candles', { 
-                                active_id: activeId, 
-                                size: 60, 
-                                to: Math.floor(Date.now() / 1000), 
-                                count: 200 
-                            }, reqId);
+                            api.iqOptionWs.on('message', h);
+                            api.iqOptionWs.send('get-candles', { active_id: activeId, size: 60, to: Math.floor(Date.now()/1000), count: 200 }, reqId);
                         });
                     };
 
-                    // Función recursiva de escaneo
-                    const tradeLocks = new Map();
-
-                    const ejecutarCiclo = async () => {
-                        const s = session ? session.botState : null;
-                        if (!s || !session.botActivo) return;
-
+                    const loop = async () => {
+                        const s = session.botState;
+                        if (!s || !session.botActivo) { session.isLooping = false; return; }
+                        
                         if (s.trades >= s.cycles) {
                             session.botActivo = false;
-                            io.to(uid).emit('live_bot_finished', { 
-                                trades: s.trades, 
-                                w: s.w, 
-                                l: s.l,
-                                report: s.report
-                            });
+                            session.isLooping = false;
+                            io.to(uid).emit('live_bot_finished', { trades: s.trades, w: s.w, l: s.l, report: s.report });
                             return;
                         }
 
-                        let scanResults = [];
-                        const totalActivos = ACTIVOS_A_ESCANEAR.length;
-                        
-                        for (let idx = 0; idx < ACTIVOS_A_ESCANEAR.length; idx++) {
-                            if (!session.botActivo || s.trades >= s.cycles) break;
-                            
-                            const currentAsset = ACTIVOS_A_ESCANEAR[idx];
-                            const assetName = knownMarkets.get(currentAsset) || `ID:${currentAsset}`;
+                        const ACTIVOS = [];
+                        knownMarkets.forEach((name, id) => ACTIVOS.push(id));
+                        if (ACTIVOS.length === 0) { // Emergency fallback
+                            [816, 817, 1072, 1073, 1074, 994, 993, 1000, 1001, 1002, 1003, 1004, 1005, 76, 77, 78, 81].forEach(id => ACTIVOS.push(id));
+                        }
 
-                            const failCount = deadAssets.get(currentAsset) || 0;
-                            if (failCount >= 3) continue;
-                            
-                            s.phase = `🔍 [${idx+1}/${totalActivos}] ${assetName}...`;
-                            io.to(uid).emit('live_bot_update', { 
-                                phase: s.phase, 
-                                trades: s.trades, w: s.w, l: s.l 
-                            });
+                        for (let i = 0; i < ACTIVOS.length; i++) {
+                            if (!session.botActivo || s.trades >= s.cycles) break;
+                            const id = ACTIVOS[i];
+                            const name = knownMarkets.get(id) || `ID:${id}`;
+                            if ((deadAssets.get(id) || 0) >= 3) continue;
+
+                            s.phase = `🔍 [${i+1}/${ACTIVOS.length}] ${name}...`;
+                            io.to(uid).emit('live_bot_update', { phase: s.phase, trades: s.trades, w: s.w, l: s.l });
 
                             try {
-                                const velasOTC = await fetchCandlesWS(currentAsset);
+                                const velas = await fetchCandlesSafe(id);
+                                if (!velas || velas.length < 15) { deadAssets.set(id, (deadAssets.get(id)||0)+1); continue; }
+                                deadAssets.set(id, 0);
 
-                                if (!velasOTC || velasOTC.length < 15) {
-                                    deadAssets.set(currentAsset, (deadAssets.get(currentAsset) || 0) + 1);
-                                    continue;
-                                }
-
-                                deadAssets.set(currentAsset, 0);
-
-                                const rsi = calcularRSI(velasOTC, 6);
-                                const cci = calcularCCI(velasOTC, 14);
+                                const rsi = calcularRSI(velas, 6);
+                                const cci = calcularCCI(velas, 14);
                                 
-                                const N_SR = 20;
-                                const lastVelas = velasOTC.slice(-N_SR);
-                                const maxHigh = Math.max(...lastVelas.map(v => v.max || v.high || v.close));
-                                const minLow = Math.min(...lastVelas.map(v => v.min || v.low || v.close));
-                                const currentPrice = velasOTC[velasOTC.length - 1].close;
-                                const channelHeight = maxHigh - minLow;
-                                
-                                const isAtResistance = channelHeight === 0 || currentPrice >= maxHigh - (channelHeight * 0.15);
-                                const isAtSupport = channelHeight === 0 || currentPrice <= minLow + (channelHeight * 0.15);
+                                // SR Lógica
+                                const last20 = velas.slice(-20);
+                                const maxH = Math.max(...last20.map(v => v.max || v.high || v.close));
+                                const minL = Math.min(...last20.map(v => v.min || v.low || v.close));
+                                const currP = velas[velas.length-1].close;
+                                const h = maxH - minL;
+                                const atR = h === 0 || currP >= maxH - (h * 0.15);
+                                const atS = h === 0 || currP <= minL + (h * 0.15);
 
-                                // Calcular cercanía a la señal (0-100) para la barra de progreso
-                                // RSI ideal: <=10 o >=90. CCI ideal: <=-200 o >=200.
-                                const rsiScore = rsi >= 90 || rsi <= 10 ? 100 : Math.min(100, (Math.abs(rsi - 50) / 40) * 100);
-                                const cciScore = Math.abs(cci) >= 200 ? 100 : Math.min(100, (Math.abs(cci) / 200) * 100);
-                                const totalScore = ((rsiScore + cciScore) / 2).toFixed(0);
-
-                                const resObj = { 
-                                    asset: assetName, 
-                                    rsi: rsi.toFixed(1), 
-                                    cci: cci.toFixed(1),
-                                    progress: totalScore 
-                                };
-                                updateScannedAssets(assetName, resObj.rsi, resObj.cci, resObj.progress);
+                                // Telemetría
+                                const rScore = rsi >= 90 || rsi <= 10 ? 100 : Math.min(100, (Math.abs(rsi-50)/40)*100);
+                                const cScore = Math.abs(cci) >= 200 ? 100 : Math.min(100, (Math.abs(cci)/200)*100);
+                                const prog = ((rScore + cScore)/2).toFixed(0);
+                                updateScannedAssets(name, rsi.toFixed(1), cci.toFixed(1), prog);
                                 io.to(uid).emit('scan_telemetry', { results: session.scannedAssets });
 
-                                let direccion = null;
-                                if (rsi <= 10.0 && cci <= -200.0 && isAtSupport) direccion = 'call';
-                                if (rsi >= 90.0 && cci >= 200.0 && isAtResistance)  direccion = 'put';
+                                let dir = null;
+                                if (rsi <= 10.0 && cci <= -200.0 && atS) dir = 'call';
+                                if (rsi >= 90.0 && cci >= 200.0 && atR)  dir = 'put';
+                                if (dir && !esLateralizado(velas)) dir = null;
 
-                                if (direccion && !esLateralizado(velasOTC)) direccion = null;
-
-                                if (direccion) {
-                                    const currentSeconds = new Date().getSeconds();
-                                    if (currentSeconds < 58) {
-                                        const waitTime = (58 - currentSeconds) * 1000;
-                                        s.phase = `⏳ ESPERANDO CIERRE VELA ${assetName} PARA ENTRAR...`;
+                                if (dir) {
+                                    if (new Date().getSeconds() < 58) {
+                                        s.phase = `⏳ ESPERANDO CIERRE VELA ${name}...`;
                                         io.to(uid).emit('live_bot_update', { phase: s.phase, trades: s.trades, w: s.w, l: s.l });
-                                        await new Promise(r => setTimeout(r, waitTime));
-                                        
-                                        try {
-                                            let velasConf = await api.getCandles(currentAsset, 60, 200, Date.now());
-                                            velasConf = velasConf.sort((a, b) => (a.from || a.id || 0) - (b.from || b.id || 0));
-                                            const rsiConf = calcularRSI(velasConf, 6);
-                                            const cciConf = calcularCCI(velasConf, 14);
-                                            const lastVelasConf = velasConf.slice(-N_SR);
-                                            const maxH = Math.max(...lastVelasConf.map(v => v.max || v.high || v.close));
-                                            const minL = Math.min(...lastVelasConf.map(v => v.min || v.low || v.close));
-                                            const currP = velasConf[velasConf.length - 1].close;
-                                            const cHeight = maxH - minL;
-                                            const atResist = cHeight === 0 || currP >= maxH - (cHeight * 0.15);
-                                            const atSupp = cHeight === 0 || currP <= minL + (cHeight * 0.15);
-                                            
-                                            let dirConf = null;
-                                            if (rsiConf <= 10.0 && cciConf <= -200.0 && atSupp) dirConf = 'call';
-                                            if (rsiConf >= 90.0 && cciConf >= 200.0 && atResist)  dirConf = 'put';
-                                            
-                                            if (!dirConf) continue;
-                                            direccion = dirConf;
-                                            
-                                            const finalWait = (60 - new Date().getSeconds()) * 1000;
-                                            if (finalWait > 0) await new Promise(r => setTimeout(r, finalWait));
-                                        } catch(e) { continue; }
+                                        await new Promise(r => setTimeout(r, (58 - new Date().getSeconds()) * 1000));
                                     }
-
-                                    const lockId = `${currentAsset}_${Date.now()}`;
-                                    if (tradeLocks.has(lockId)) continue;
-
-                                    const side = direccion;
-                                    s.phase = `🎯 ${side.toUpperCase()} → ${assetName}`;
+                                    
+                                    s.phase = `🎯 ${dir.toUpperCase()} → ${name}`;
                                     io.to(uid).emit('live_bot_update', { phase: s.phase, trades: s.trades, w: s.w, l: s.l });
-                                    tradeLocks.set(lockId, true);
-
                                     try {
-                                        const order = await api.sendOrderBinary(currentAsset, side, iqOptionExpired(1), balanceId, 0, amount);
-                                        const tradeStatus = {
-                                            id: Date.now(), asset: assetName, side: side.toUpperCase(),
-                                            entry: velasOTC[velasOTC.length-1].close,
-                                            rsi: rsi.toFixed(1), cci: cci.toFixed(1),
-                                            time: new Date().toLocaleTimeString(),
-                                            result: 'PROCESANDO...', color: 'text-blue-400'
-                                        };
-                                        io.to(uid).emit('trade_executed', tradeStatus);
-                                        s.report.push(tradeStatus);
-                                        s.trades++;
-
+                                        const order = await api.sendOrderBinary(id, dir, iqOptionExpired(1), balanceId, 0, amount);
+                                        const ts = { id: Date.now(), asset: name, side: dir.toUpperCase(), entry: currP, rsi: rsi.toFixed(1), cci: cci.toFixed(1), time: new Date().toLocaleTimeString(), result: 'PROCESANDO...', color: 'text-blue-400' };
+                                        io.to(uid).emit('trade_executed', ts);
+                                        s.report.push(ts); s.trades++;
                                         setTimeout(async () => {
                                             try {
-                                                let velasCierre = await api.getCandles(currentAsset, 60, 4, Date.now());
-                                                velasCierre = velasCierre.sort((a, b) => (a.from || a.id || 0) - (b.from || b.id || 0));
-                                                const vCierre = velasCierre[velasCierre.length - 2];
-                                                const vEntrada = velasCierre[velasCierre.length - 3];
-                                                const win = side === 'call' ? vCierre.close > vEntrada.close : vCierre.close < vEntrada.close;
-                                                
+                                                let vC = await api.getCandles(id, 60, 4, Date.now());
+                                                vC = vC.sort((a,b)=>a.from-b.from);
+                                                const win = dir === 'call' ? vC[vC.length-2].close > vC[vC.length-3].close : vC[vC.length-2].close < vC[vC.length-3].close;
                                                 if (win) s.w++; else s.l++;
-                                                tradeStatus.result = win ? 'GANADA ✅' : 'PERDIDA ❌';
-                                                tradeStatus.color = win ? 'text-green-400' : 'text-red-400';
-                                                io.to(uid).emit('live_trade_result', tradeStatus);
-                                            } catch (err) {
-                                                tradeStatus.result = 'FINALIZADA';
-                                                io.to(uid).emit('live_trade_result', tradeStatus);
-                                            }
+                                                ts.result = win ? 'GANADA ✅' : 'PERDIDA ❌';
+                                                ts.color = win ? 'text-green-400' : 'text-red-400';
+                                                io.to(uid).emit('live_trade_result', ts);
+                                            } catch(e) { ts.result='FINALIZADA'; io.to(uid).emit('live_trade_result', ts); }
                                         }, 65000);
-                                    } catch(errOrder) {
-                                        io.to(uid).emit('iq_error', { msg: `${assetName}: Orden fallida` });
-                                    }
+                                    } catch(e) {}
                                 }
-                            } catch(e) { /* ignore loop error */ }
+                            } catch(e) {}
                             await new Promise(r => setTimeout(r, 200));
                         }
-                        
+
                         if (session.botActivo && s.trades < s.cycles) {
                             s.phase = `⏳ Recargando en 8s... (${s.trades}/${s.cycles})`;
                             io.to(uid).emit('live_bot_update', { phase: s.phase, trades: s.trades, w: s.w, l: s.l });
-                            setTimeout(ejecutarCiclo, 8000);
-                        } else if (session.botActivo && s.trades >= s.cycles) {
-                            s.phase = `⏳ Esperando cierre de operaciones...`;
-                            io.to(uid).emit('live_bot_update', { phase: s.phase, trades: s.trades, w: s.w, l: s.l });
-                            const checkFinish = setInterval(() => {
-                                if (s.w + s.l >= s.trades || !session.botActivo) {
-                                    clearInterval(checkFinish);
-                                    if (session.botActivo) {
-                                        session.botActivo = false;
-                                        io.to(uid).emit('live_bot_finished', { trades: s.trades, w: s.w, l: s.l, report: s.report });
-                                    }
-                                }
-                            }, 5000);
+                            session.botTimeout = setTimeout(loop, 8000);
+                        } else {
+                            session.isLooping = false;
                         }
                     };
-
-                    if (session) {
-                        session.botActivo = true;
-                        session.liveBotCiclo = { stop: () => { session.botActivo = false; } };
-                    }
-                    ejecutarCiclo(); // Arranca inmediatamente
+                    loop();
+                }
 
 
 
