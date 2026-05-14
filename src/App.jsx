@@ -345,7 +345,7 @@ const App = () => {
             <LogOut className="w-6 h-6" />
             <span className="hidden md:block">LOGOUT</span>
           </button>
-          <div className="mt-4 text-[9px] text-gray-600 font-mono text-center tracking-tighter uppercase">SYSTEM v6.4 - TOTAL MOTOR REFACTOR</div>
+          <div className="mt-4 text-[9px] text-gray-600 font-mono text-center tracking-tighter uppercase">SYSTEM v6.5 - PERSISTENCE MAX</div>
         </div>
       </aside>
 
