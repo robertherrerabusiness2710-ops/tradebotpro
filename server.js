@@ -47,11 +47,12 @@ io.on('connection', (socket) => {
                 });
             }
             if (session.botActivo && session.botState) {
-                // Restaurar radar
-                if (session.scannedAssets) {
+                // Restaurar radar inmediatamente
+                if (session.scannedAssets && session.scannedAssets.length > 0) {
                     socket.emit('scan_init', { assets: session.scannedAssets });
+                    socket.emit('scan_telemetry', { results: session.scannedAssets });
                 }
-                socket.emit('bot_restored_state', session.botState);
+                socket.emit('bot_restored_state', { ...session.botState, phase: session.botState.phase });
             }
         }
     });
@@ -319,19 +320,24 @@ io.on('connection', (socket) => {
                     // 🛡️ SISTEMA DE RESPALDO (FALLBACK)
                     // Si el broker no envió la lista de activos a tiempo, forzamos los IDs principales de cripto
                     if (ACTIVOS_A_ESCANEAR.length === 0) {
-                        console.log(`[BOT WARNING] Usando mapa de criptos de respaldo...`);
+                        console.log(`[BOT WARNING] Usando catálogo de emergencia v6.4...`);
                         const fallbackActivos = [
-                            { id: 816, name: 'Bitcoin (OTC)' },
-                            { id: 817, name: 'Ethereum (OTC)' },
-                            { id: 1072, name: 'Ripple (OTC)' },
-                            { id: 1073, name: 'Solana (OTC)' },
-                            { id: 100000, name: 'US 500' }, // ID ficticio para indices, solo para fallback
-                            { id: 100001, name: 'Amazon' },
-                            { id: 100002, name: 'FR 40' }
+                            { id: 816, name: 'Bitcoin (OTC)' }, { id: 817, name: 'Ethereum (OTC)' },
+                            { id: 1072, name: 'Ripple (OTC)' }, { id: 1073, name: 'Solana (OTC)' },
+                            { id: 994, name: 'TRON (OTC)' }, { id: 1074, name: 'Binance Coin (OTC)' },
+                            { id: 993, name: 'Dogecoin (OTC)' }, { id: 1000, name: 'Amazon (OTC)' },
+                            { id: 1001, name: 'Apple (OTC)' }, { id: 1002, name: 'Google (OTC)' },
+                            { id: 1003, name: 'Facebook (OTC)' }, { id: 1004, name: 'Netflix (OTC)' },
+                            { id: 1005, name: 'Tesla (OTC)' }, { id: 1006, name: 'Twitter (OTC)' },
+                            { id: 76, name: 'EUR/USD (OTC)' }, { id: 77, name: 'GBP/USD (OTC)' },
+                            { id: 78, name: 'USD/JPY (OTC)' }, { id: 81, name: 'EUR/GBP (OTC)' },
+                            { id: 943, name: 'AUD/USD (OTC)' }, { id: 944, name: 'NZD/USD (OTC)' }
                         ];
                         fallbackActivos.forEach(act => {
-                            knownMarkets.set(act.id, act.name);
-                            ACTIVOS_A_ESCANEAR.push(act.id);
+                            if (!knownMarkets.has(act.id)) {
+                                knownMarkets.set(act.id, act.name);
+                                ACTIVOS_A_ESCANEAR.push(act.id);
+                            }
                         });
                     }
 
