@@ -100,19 +100,20 @@ function iniciarMotorBot(uid, session, balanceId, amount) {
 
     const fetchCandlesSafe = (activeId) => {
         return new Promise((resolve) => {
-            const reqId = String(Date.now() + Math.floor(Math.random() * 1000));
-            const t = setTimeout(() => { api.iqOptionWs.removeListener('message', h); resolve(null); }, 5000);
-            const h = (m) => {
-                try {
-                    const js = JSON.parse(m.toString());
-                    if (js.name === 'candles' && String(js.request_id) === reqId) {
-                        clearTimeout(t); api.iqOptionWs.removeListener('message', h);
-                        resolve((js.msg.data || []).sort((a,b)=>a.from-b.from));
+            const timeout = setTimeout(() => resolve(null), 5000);
+            api.getCandles(activeId, 60, 200, Date.now())
+                .then(velas => {
+                    clearTimeout(timeout);
+                    if (velas && velas.length) {
+                        resolve(velas.sort((a,b)=>a.from-b.from));
+                    } else {
+                        resolve(null);
                     }
-                } catch(e){}
-            };
-            api.iqOptionWs.on('message', h);
-            api.iqOptionWs.send('get-candles', { active_id: activeId, size: 60, to: Math.floor(Date.now()/1000), count: 200 }, reqId);
+                })
+                .catch(() => {
+                    clearTimeout(timeout);
+                    resolve(null);
+                });
         });
     };
 
