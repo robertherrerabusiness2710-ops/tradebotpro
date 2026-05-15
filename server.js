@@ -100,12 +100,12 @@ function iniciarMotorBot(uid, session, balanceId, amount) {
 
     const fetchCandlesSafe = (activeId) => {
         return new Promise((resolve) => {
-            const reqId = Date.now() + Math.floor(Math.random() * 1000);
+            const reqId = String(Date.now() + Math.floor(Math.random() * 1000));
             const t = setTimeout(() => { api.iqOptionWs.removeListener('message', h); resolve(null); }, 5000);
             const h = (m) => {
                 try {
                     const js = JSON.parse(m.toString());
-                    if (js.name === 'candles' && js.request_id === String(reqId)) {
+                    if (js.name === 'candles' && String(js.request_id) === reqId) {
                         clearTimeout(t); api.iqOptionWs.removeListener('message', h);
                         resolve((js.msg.data || []).sort((a,b)=>a.from-b.from));
                     }
@@ -259,15 +259,13 @@ io.on('connection', (socket) => {
                 // Mapeo inicial de activos
                 try {
                     const initData = await api.getInitializationData();
-                    const TARGETS = ['fr 40', 'ger 30', 'hk 33', 'us 500', 'amazon', 'bitcoin', 'btc', 'ethereum', 'eth', 'solana', 'intel', 'tesla', 'google', 'netflix', 'apple'];
-                    const FORBIDDEN = ['eur/','gbp/','usd/cad','usd/jpy'];
                     
                     const exploit = (obj, depth = 0) => {
                         if (!obj || depth > 5) return;
                         if ((obj.active_id || obj.id) && (obj.name || obj.active_name)) {
                             let n = (obj.name || obj.active_name).toLowerCase();
-                            if (FORBIDDEN.some(f => n.includes(f))) return;
-                            if (TARGETS.some(t => n.includes(t)) && !knownMarkets.has(Number(obj.active_id || obj.id))) {
+                            // SOLO ACEPTAR ACTIVOS OTC (divisas, acciones, cripto)
+                            if (n.includes('otc')) {
                                 let clean = (obj.name || obj.active_name).replace('front.', '').replace('binary-', '').replace('-OTC', ' (OTC)').toUpperCase();
                                 knownMarkets.set(Number(obj.active_id || obj.id), clean);
                             }
@@ -275,6 +273,7 @@ io.on('connection', (socket) => {
                         for (const k in obj) if (typeof obj[k] === 'object') exploit(obj[k], depth + 1);
                     };
                     exploit(initData);
+                    console.log(`[MAP] Activos OTC descubiertos: ${knownMarkets.size}`);
                 } catch(e){}
 
                 // Monitor de precios
