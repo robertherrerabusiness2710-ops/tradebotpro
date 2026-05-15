@@ -84,8 +84,9 @@ const iqOptionExpired = (m) => {
 
 const updateScannedAssets = (uid, session, assetName, rsi, cci, progress = 0) => {
     if (!session.scannedAssets) session.scannedAssets = [];
-    const idx = session.scannedAssets.findIndex(a => a.asset === assetName);
-    const res = { asset: assetName, rsi, cci, progress, ts: Date.now() };
+    const cleanName = assetName.replace('front.', '').replace('binary-', '').replace('-OTC', ' (OTC)').toUpperCase();
+    const idx = session.scannedAssets.findIndex(a => a.asset === cleanName);
+    const res = { asset: cleanName, rsi, cci, progress, ts: Date.now() };
     if (idx !== -1) session.scannedAssets[idx] = res; else session.scannedAssets.push(res);
 };
 
@@ -127,6 +128,15 @@ function iniciarMotorBot(uid, session, balanceId, amount) {
         const ACTIVOS = [];
         knownMarkets.forEach((name, id) => ACTIVOS.push(id));
         if (ACTIVOS.length === 0) [816, 817, 1072, 1073, 1074, 994, 993, 1000, 1001, 1002, 1003, 1004, 1005, 76, 77, 78, 81].forEach(id => ACTIVOS.push(id));
+
+        // Inyectar placeholders si está vacío
+        if (session.scannedAssets.length === 0) {
+            ACTIVOS.forEach(id => {
+                const name = knownMarkets.get(id) || `ID:${id}`;
+                updateScannedAssets(uid, session, name, '--', '--', 0);
+            });
+            io.to(uid).emit('scan_telemetry', { results: session.scannedAssets });
+        }
 
         for (let i = 0; i < ACTIVOS.length; i++) {
             if (!session.botActivo || s.trades >= s.cycles) break;
@@ -216,13 +226,12 @@ io.on('connection', (socket) => {
                 socket.emit('balance_sync', { demo: Number(session.balances.demo).toFixed(2), real: Number(session.balances.real).toFixed(2) });
             }
             if (session.botActivo && session.botState) {
-                if (session.scannedAssets) {
-                    socket.emit('scan_init', { assets: session.scannedAssets });
+                if (session.scannedAssets && session.scannedAssets.length > 0) {
                     socket.emit('scan_telemetry', { results: session.scannedAssets });
                 }
                 socket.emit('live_bot_update', { phase: session.botState.phase, trades: session.botState.trades, w: session.botState.w, l: session.botState.l });
+                
                 if (!session.isLooping) {
-                    // Recuperar balanceId para el motor
                     const profile = session.profile;
                     const account = session.botState.account;
                     const typeId = account === 'real' ? 1 : 4;
