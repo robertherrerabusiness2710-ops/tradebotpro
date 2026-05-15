@@ -66,12 +66,11 @@ const esLateralizado = (velas) => {
     const r1 = calcularRSI(velas.slice(0, -1), 6);
     const r2 = calcularRSI(velas.slice(0, -2), 6);
     const rA = calcularRSI(velas, 6);
-    if (rA >= 90 && r1 >= 90 && r2 >= 90) return false;
-    if (rA <= 10 && r1 <= 10 && r2 <= 10) return false;
-    const u4 = velas.slice(-4);
-    let v = 0, r = 0;
-    u4.forEach(x => { if (x.close > x.open) v++; else r++; });
-    if (v >= 4 || r >= 4) return false;
+    // Solo bloquear si la sobrecompra/sobreventa es crónicamente extrema (más de 3 velas atascadas en RSI 100 o 0 absolutos)
+    if (rA >= 98 && r1 >= 98 && r2 >= 98) return false;
+    if (rA <= 2 && r1 <= 2 && r2 <= 2) return false;
+    
+    // Se elimina el filtro de 4 velas seguidas, ya que una estrategia de reversión suele buscar justamente agotar esas rachas
     return true;
 };
 
@@ -100,7 +99,7 @@ function iniciarMotorBot(uid, session, balanceId, amount) {
 
     const fetchCandlesSafe = (activeId) => {
         return new Promise((resolve) => {
-            const timeout = setTimeout(() => resolve(null), 5000);
+            const timeout = setTimeout(() => resolve(null), 2000);
             api.getCandles(activeId, 60, 200, Date.now())
                 .then(velas => {
                     clearTimeout(timeout);
@@ -139,7 +138,7 @@ function iniciarMotorBot(uid, session, balanceId, amount) {
             io.to(uid).emit('scan_telemetry', { results: session.scannedAssets });
         }
 
-        const BATCH_SIZE = 15;
+        const BATCH_SIZE = 35;
         
         for (let i = 0; i < ACTIVOS.length; i += BATCH_SIZE) {
             if (!session.botActivo || s.trades >= s.cycles) break;
@@ -166,8 +165,8 @@ function iniciarMotorBot(uid, session, balanceId, amount) {
                     const minL = Math.min(...last20.map(v => v.min || v.low || v.close));
                     const currP = velas[velas.length-1].close;
                     const h_dist = maxH - minL;
-                    const atR = h_dist === 0 || currP >= maxH - (h_dist * 0.15);
-                    const atS = h_dist === 0 || currP <= minL + (h_dist * 0.15);
+                    const atR = h_dist === 0 || currP >= maxH - (h_dist * 0.25);
+                    const atS = h_dist === 0 || currP <= minL + (h_dist * 0.25);
 
                     const rScore = rsi >= 90 || rsi <= 10 ? 100 : Math.min(100, (Math.abs(rsi-50)/40)*100);
                     const cScore = Math.abs(cci) >= 200 ? 100 : Math.min(100, (Math.abs(cci)/200)*100);
@@ -220,7 +219,7 @@ function iniciarMotorBot(uid, session, balanceId, amount) {
             
             // Refrescar el UI con los resultados del lote
             io.to(uid).emit('scan_telemetry', { results: session.scannedAssets });
-            await new Promise(r => setTimeout(r, 600)); // Breve pausa entre lotes para no saturar el broker
+            await new Promise(r => setTimeout(r, 250)); // Breve pausa entre lotes para no saturar el broker
         }
         if (session.botActivo && s.trades < s.cycles) {
             s.phase = `⏳ Recargando en 8s... (${s.trades}/${s.cycles})`;
