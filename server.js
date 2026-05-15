@@ -139,69 +139,88 @@ function iniciarMotorBot(uid, session, balanceId, amount) {
             io.to(uid).emit('scan_telemetry', { results: session.scannedAssets });
         }
 
-        for (let i = 0; i < ACTIVOS.length; i++) {
+        const BATCH_SIZE = 15;
+        
+        for (let i = 0; i < ACTIVOS.length; i += BATCH_SIZE) {
             if (!session.botActivo || s.trades >= s.cycles) break;
-            const id = ACTIVOS[i];
-            const name = knownMarkets.get(id) || `ID:${id}`;
-            if ((deadAssets.get(id) || 0) >= 3) continue;
-
-            s.phase = `🔍 [${i+1}/${ACTIVOS.length}] ${name}...`;
+            
+            const batch = ACTIVOS.slice(i, i + BATCH_SIZE);
+            s.phase = `🔍 Analizando Lote [${i+1} a ${Math.min(i+BATCH_SIZE, ACTIVOS.length)} de ${ACTIVOS.length}]...`;
             io.to(uid).emit('live_bot_update', { phase: s.phase, trades: s.trades, w: s.w, l: s.l });
 
-            try {
-                const velas = await fetchCandlesSafe(id);
-                if (!velas || velas.length < 15) { deadAssets.set(id, (deadAssets.get(id)||0)+1); continue; }
-                deadAssets.set(id, 0);
+            await Promise.all(batch.map(async (id) => {
+                if (!session.botActivo || s.trades >= s.cycles) return;
+                
+                const name = knownMarkets.get(id) || `ID:${id}`;
+                if ((deadAssets.get(id) || 0) >= 3) return;
 
-                const rsi = calcularRSI(velas, 6);
-                const cci = calcularCCI(velas, 14);
-                const last20 = velas.slice(-20);
-                const maxH = Math.max(...last20.map(v => v.max || v.high || v.close));
-                const minL = Math.min(...last20.map(v => v.min || v.low || v.close));
-                const currP = velas[velas.length-1].close;
-                const h_dist = maxH - minL;
-                const atR = h_dist === 0 || currP >= maxH - (h_dist * 0.15);
-                const atS = h_dist === 0 || currP <= minL + (h_dist * 0.15);
+                try {
+                    const velas = await fetchCandlesSafe(id);
+                    if (!velas || velas.length < 15) { deadAssets.set(id, (deadAssets.get(id)||0)+1); return; }
+                    deadAssets.set(id, 0);
 
-                const rScore = rsi >= 90 || rsi <= 10 ? 100 : Math.min(100, (Math.abs(rsi-50)/40)*100);
-                const cScore = Math.abs(cci) >= 200 ? 100 : Math.min(100, (Math.abs(cci)/200)*100);
-                const prog = ((rScore + cScore)/2).toFixed(0);
-                updateScannedAssets(uid, session, name, rsi.toFixed(1), cci.toFixed(1), prog);
-                io.to(uid).emit('scan_telemetry', { results: session.scannedAssets });
+                    const rsi = calcularRSI(velas, 6);
+                    const cci = calcularCCI(velas, 14);
+                    const last20 = velas.slice(-20);
+                    const maxH = Math.max(...last20.map(v => v.max || v.high || v.close));
+                    const minL = Math.min(...last20.map(v => v.min || v.low || v.close));
+                    const currP = velas[velas.length-1].close;
+                    const h_dist = maxH - minL;
+                    const atR = h_dist === 0 || currP >= maxH - (h_dist * 0.15);
+                    const atS = h_dist === 0 || currP <= minL + (h_dist * 0.15);
 
-                let dir = null;
-                if (rsi <= 10.0 && cci <= -200.0 && atS) dir = 'call';
-                if (rsi >= 90.0 && cci >= 200.0 && atR)  dir = 'put';
-                if (dir && !esLateralizado(velas)) dir = null;
+                    const rScore = rsi >= 90 || rsi <= 10 ? 100 : Math.min(100, (Math.abs(rsi-50)/40)*100);
+                    const cScore = Math.abs(cci) >= 200 ? 100 : Math.min(100, (Math.abs(cci)/200)*100);
+                    const prog = ((rScore + cScore)/2).toFixed(0);
+                    
+                    updateScannedAssets(uid, session, name, rsi.toFixed(1), cci.toFixed(1), prog);
+                    
+                    let dir = null;
+                    if (rsi <= 10.0 && cci <= -200.0 && atS) dir = 'call';
+                    if (rsi >= 90.0 && cci >= 200.0 && atR)  dir = 'put';
+                    if (dir && !esLateralizado(velas)) dir = null;
 
-                if (dir) {
-                    if (new Date().getSeconds() < 58) {
-                        s.phase = `⏳ ESPERANDO CIERRE VELA ${name}...`;
+                    if (dir) {
+                        // Reservar cupo de operación para evitar colisiones en concurrencia
+                        if (s.trades >= s.cycles) return;
+                        s.trades++;
+
+                        if (new Date().getSeconds() < 58) {
+                            s.phase = `⏳ ESPERANDO CIERRE VELA ${name}...`;
+                            io.to(uid).emit('live_bot_update', { phase: s.phase, trades: s.trades, w: s.w, l: s.l });
+                            await new Promise(r => setTimeout(r, (58 - new Date().getSeconds()) * 1000));
+                        }
+                        
+                        if (!session.botActivo) { s.trades--; return; } // Rollback si el bot se apagó mientras esperaba
+
+                        s.phase = `🎯 ${dir.toUpperCase()} → ${name}`;
                         io.to(uid).emit('live_bot_update', { phase: s.phase, trades: s.trades, w: s.w, l: s.l });
-                        await new Promise(r => setTimeout(r, (58 - new Date().getSeconds()) * 1000));
+                        
+                        try {
+                            const order = await api.sendOrderBinary(id, dir, iqOptionExpired(1), balanceId, 0, amount || s.amount);
+                            const ts = { id: Date.now(), asset: name, side: dir.toUpperCase(), entry: currP, rsi: rsi.toFixed(1), cci: cci.toFixed(1), time: new Date().toLocaleTimeString(), result: 'PROCESANDO...', color: 'text-blue-400' };
+                            io.to(uid).emit('trade_executed', ts);
+                            s.report.push(ts);
+                            
+                            setTimeout(async () => {
+                                try {
+                                    let vC = await api.getCandles(id, 60, 4, Date.now());
+                                    vC = vC.sort((a,b)=>a.from-b.from);
+                                    const win = dir === 'call' ? vC[vC.length-2].close > vC[vC.length-3].close : vC[vC.length-2].close < vC[vC.length-3].close;
+                                    if (win) s.w++; else s.l++;
+                                    ts.result = win ? 'GANADA ✅' : 'PERDIDA ❌';
+                                    ts.color = win ? 'text-green-400' : 'text-red-400';
+                                    io.to(uid).emit('live_trade_result', ts);
+                                } catch(e) { ts.result='FINALIZADA'; io.to(uid).emit('live_trade_result', ts); }
+                            }, 65000);
+                        } catch(e) { s.trades--; /* Rollback on failure */ }
                     }
-                    s.phase = `🎯 ${dir.toUpperCase()} → ${name}`;
-                    io.to(uid).emit('live_bot_update', { phase: s.phase, trades: s.trades, w: s.w, l: s.l });
-                    try {
-                        const order = await api.sendOrderBinary(id, dir, iqOptionExpired(1), balanceId, 0, amount || s.amount);
-                        const ts = { id: Date.now(), asset: name, side: dir.toUpperCase(), entry: currP, rsi: rsi.toFixed(1), cci: cci.toFixed(1), time: new Date().toLocaleTimeString(), result: 'PROCESANDO...', color: 'text-blue-400' };
-                        io.to(uid).emit('trade_executed', ts);
-                        s.report.push(ts); s.trades++;
-                        setTimeout(async () => {
-                            try {
-                                let vC = await api.getCandles(id, 60, 4, Date.now());
-                                vC = vC.sort((a,b)=>a.from-b.from);
-                                const win = dir === 'call' ? vC[vC.length-2].close > vC[vC.length-3].close : vC[vC.length-2].close < vC[vC.length-3].close;
-                                if (win) s.w++; else s.l++;
-                                ts.result = win ? 'GANADA ✅' : 'PERDIDA ❌';
-                                ts.color = win ? 'text-green-400' : 'text-red-400';
-                                io.to(uid).emit('live_trade_result', ts);
-                            } catch(e) { ts.result='FINALIZADA'; io.to(uid).emit('live_trade_result', ts); }
-                        }, 65000);
-                    } catch(e) {}
-                }
-            } catch(e) {}
-            await new Promise(r => setTimeout(r, 200));
+                } catch(e) {}
+            }));
+            
+            // Refrescar el UI con los resultados del lote
+            io.to(uid).emit('scan_telemetry', { results: session.scannedAssets });
+            await new Promise(r => setTimeout(r, 600)); // Breve pausa entre lotes para no saturar el broker
         }
         if (session.botActivo && s.trades < s.cycles) {
             s.phase = `⏳ Recargando en 8s... (${s.trades}/${s.cycles})`;
