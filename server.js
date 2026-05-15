@@ -138,7 +138,7 @@ function iniciarMotorBot(uid, session, balanceId, amount) {
             io.to(uid).emit('scan_telemetry', { results: session.scannedAssets });
         }
 
-        const BATCH_SIZE = 35;
+        const BATCH_SIZE = 15;
         
         for (let i = 0; i < ACTIVOS.length; i += BATCH_SIZE) {
             if (!session.botActivo || s.trades >= s.cycles) break;
@@ -147,16 +147,16 @@ function iniciarMotorBot(uid, session, balanceId, amount) {
             s.phase = `🔍 Analizando Lote [${i+1} a ${Math.min(i+BATCH_SIZE, ACTIVOS.length)} de ${ACTIVOS.length}]...`;
             io.to(uid).emit('live_bot_update', { phase: s.phase, trades: s.trades, w: s.w, l: s.l });
 
-            await Promise.all(batch.map(async (id) => {
+            await Promise.all(batch.map(async (id, index) => {
                 if (!session.botActivo || s.trades >= s.cycles) return;
                 
+                await new Promise(r => setTimeout(r, index * 35)); // Desfase anti-spam para el broker
+                
                 const name = knownMarkets.get(id) || `ID:${id}`;
-                if ((deadAssets.get(id) || 0) >= 3) return;
 
                 try {
                     const velas = await fetchCandlesSafe(id);
-                    if (!velas || velas.length < 15) { deadAssets.set(id, (deadAssets.get(id)||0)+1); return; }
-                    deadAssets.set(id, 0);
+                    if (!velas || velas.length < 15) return; // Si falla por rate-limit, reintenta el próximo ciclo sin matarlo
 
                     const rsi = calcularRSI(velas, 6);
                     const cci = calcularCCI(velas, 14);
@@ -219,7 +219,7 @@ function iniciarMotorBot(uid, session, balanceId, amount) {
             
             // Refrescar el UI con los resultados del lote
             io.to(uid).emit('scan_telemetry', { results: session.scannedAssets });
-            await new Promise(r => setTimeout(r, 250)); // Breve pausa entre lotes para no saturar el broker
+            await new Promise(r => setTimeout(r, 400)); // Breve pausa entre lotes para que el websocket respire
         }
         if (session.botActivo && s.trades < s.cycles) {
             s.phase = `⏳ Recargando en 8s... (${s.trades}/${s.cycles})`;
