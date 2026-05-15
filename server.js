@@ -279,7 +279,7 @@ io.on('connection', (socket) => {
                                 try {
                                     const j = JSON.parse(d);
                                     priceList.push({ pair: symbol.replace('USDT', ''), price: parseFloat(j.price).toLocaleString('en-US', { minimumFractionDigits: 2 }), timestamp: new Date().toLocaleTimeString() });
-                                    if (priceList.length === symbols.length) io.to(uid).emit('price_multi_update', { prices: priceList });
+                                    if (priceList.length === symbols.length) io.to(socket.uid).emit('price_multi_update', { prices: priceList });
                                 } catch(e){}
                             });
                         }).on('error', ()=>{});
@@ -293,7 +293,7 @@ io.on('connection', (socket) => {
     });
 
     socket.on('start_live_bot', (config) => {
-        const session = userSessions.get(uid);
+        const session = userSessions.get(socket.uid);
         if (!session) return;
         if (session.botActivo) { session.botActivo = false; if (session.botTimeout) clearTimeout(session.botTimeout); }
         const { account, cycles, amount } = config;
