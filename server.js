@@ -349,12 +349,17 @@ function iniciarMotorBot(uid, session, balanceId, amount) {
 
                                 let entryPrice = currP;
                                 try {
-                                    const vN = await api.getCandles(id, 60, 2, Date.now());
+                                    // Usar fetchCandlesSafe que ya tiene timeout integrado
+                                    const vN = await fetchCandlesSafe(id);
                                     if (vN && vN.length > 0) entryPrice = vN[vN.length - 1].close;
                                 } catch(e) {}
                                 ts.entry = entryPrice;
 
-                                const order = await api.sendOrderBinary(id, dir, iqOptionExpired(1), balanceId, 0, amount || s.amount);
+                                // CRITICO: Envolver la orden en un timeout estricto. Si IQ Option ignora la petición, no nos quedamos colgados.
+                                const order = await Promise.race([
+                                    api.sendOrderBinary(id, dir, iqOptionExpired(1), balanceId, 0, amount || s.amount),
+                                    new Promise((_, rej) => setTimeout(() => rej(new Error('Broker no responde (Timeout)')), 10000))
+                                ]);
                                 
                                 ts.result = `PROCESANDO... 📈`;
                                 ts.color = 'text-yellow-400 font-black animate-pulse';
