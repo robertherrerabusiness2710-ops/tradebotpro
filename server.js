@@ -66,7 +66,6 @@ const esLateralizado = (velas) => {
     const last15 = velas.slice(-15);
     const sma = last15.reduce((sum, v) => sum + v.close, 0) / 15;
 
-    // 1. Contar cruces del precio sobre la SMA (mercado lateral = oscila sobre la media)
     let crosses = 0;
     for (let i = 1; i < last15.length; i++) {
         if ((last15[i-1].close < sma && last15[i].close >= sma) ||
@@ -75,13 +74,21 @@ const esLateralizado = (velas) => {
         }
     }
 
-    // 2. Medir el rango total de las últimas 15 velas (banda de precio)
     const maxH = Math.max(...last15.map(v => v.max || v.high || v.close));
     const minL = Math.min(...last15.map(v => v.min || v.low || v.close));
-    const rangeRatio = sma > 0 ? (maxH - minL) / sma : 1;
+    const totalRange = maxH - minL;
+    
+    if (totalRange === 0) return true;
 
-    // Lateral = mínimo 2 cruces de SMA Y rango total ≤ 4% del precio
-    return crosses >= 2 && rangeRatio <= 0.04;
+    // Desplazamiento neto entre la vela 1 y la 15
+    const netMovement = Math.abs(last15[last15.length-1].close - last15[0].close);
+    
+    // Si el desplazamiento neto es mayor al 40% del rango total, ES TENDENCIA.
+    // Para ser lateral, el precio debe terminar cerca de donde empezó, oscilando en el medio.
+    const isRanging = (netMovement / totalRange) <= 0.4;
+
+    // Mínimo 3 cruces de SMA y desplazamiento neto pequeño
+    return crosses >= 3 && isRanging;
 };
 
 const iqOptionExpired = (m) => {
@@ -158,23 +165,21 @@ const checkCycleCompletion = (uid, session) => {
     if (!s) return;
     
     // El ciclo termina cuando se han completado y evaluado todas las operaciones colocadas,
-    // O si ya no hay loop activo y no quedan operaciones abiertas
-    const allDone = s.completedTrades >= s.trades;
-    const cyclesDone = s.trades >= s.cycles;
-    const noLoop = !session.botActivo || !session.isLooping;
-    
-    if (allDone && (cyclesDone || noLoop)) {
-        session.botActivo = false;
-        session.isLooping = false;
-        if (session.botTimeout) clearTimeout(session.botTimeout);
-        
-        io.to(uid).emit('live_bot_finished', { 
-            id: s.id,
-            trades: s.trades, 
-            w: s.w, 
-            l: s.l, 
-            report: s.report 
-        });
+    // y además la cantidad de operaciones intentadas alcanzó (o superó) el límite programado.
+    const allTradesFinished = s.report.every(t => 
+        t.result !== 'PROCESANDO...' && 
+        t.result !== 'PROCESANDO VELA... ⏳' &&
+        t.result !== 'ENVIANDO A BROKER... 🎯' &&
+        t.result !== 'PROCESANDO... 📈' &&
+        t.result !== 'EN CURSO 📈'
+    );
+
+    if (s.trades >= s.cycles && allTradesFinished) {
+        if (!s.finishedFlag) {
+            s.finishedFlag = true;
+            s.phase = `✅ ¡Ciclo completado con éxito! Efectividad: ${s.trades > 0 ? ((s.w / s.trades) * 100).toFixed(0) : 0}%`;
+            io.to(uid).emit('live_bot_finished', { phase: s.phase, trades: s.trades, w: s.w, l: s.l, report: s.report });
+        }
     }
 };
 
@@ -295,7 +300,7 @@ function iniciarMotorBot(uid, session, balanceId, amount) {
                         if (rsi >= limits.rsiPut  && cci >= limits.cciPut  && atR)  dir = 'put';
                     }
 
-                    if (!dir) {
+                    if (!dir && isLat) {
                         // Oportunidades cercanas: umbrales MUY amplios para capturar señales en desarrollo
                         let near = null;
                         // CALL: RSI por debajo del umbral+15 Y CCI por debajo del umbral+100
