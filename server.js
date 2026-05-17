@@ -63,15 +63,16 @@ const calcularCCI = (velas, periodos = 14) => {
 
 const esLateralizado = (velas) => {
     if (velas.length < 10) return true;
-    const r1 = calcularRSI(velas.slice(0, -1), 6);
-    const r2 = calcularRSI(velas.slice(0, -2), 6);
-    const rA = calcularRSI(velas, 6);
-    // Solo bloquear si la sobrecompra/sobreventa es crónicamente extrema (más de 3 velas atascadas en RSI 100 o 0 absolutos)
-    if (rA >= 98 && r1 >= 98 && r2 >= 98) return false;
-    if (rA <= 2 && r1 <= 2 && r2 <= 2) return false;
-    
-    // Se elimina el filtro de 4 velas seguidas, ya que una estrategia de reversión suele buscar justamente agotar esas rachas
-    return true;
+    const last10 = velas.slice(-10);
+    const sma = last10.reduce((sum, v) => sum + v.close, 0) / 10;
+    let crosses = 0;
+    for(let i=1; i<last10.length; i++) {
+        if((last10[i-1].close < sma && last10[i].close >= sma) || (last10[i-1].close > sma && last10[i].close <= sma)) {
+            crosses++;
+        }
+    }
+    // Si cruza la media 2 o más veces en 10 velas, está rebotando (lateral). Si no cruza o cruza solo 1 vez, es tendencia pura.
+    return crosses >= 2;
 };
 
 const iqOptionExpired = (m) => {
@@ -175,9 +176,21 @@ function iniciarMotorBot(uid, session, balanceId, amount) {
                     updateScannedAssets(uid, session, name, rsi.toFixed(1), cci.toFixed(1), prog);
                     
                     let dir = null;
-                    if (rsi <= 20.0 && cci <= -150.0 && atS) dir = 'call';
-                    if (rsi >= 80.0 && cci >= 150.0 && atR)  dir = 'put';
-                    if (dir && !esLateralizado(velas)) dir = null;
+                    const isLat = esLateralizado(velas);
+                    if (rsi <= 20.0 && cci <= -150.0 && atS && isLat) dir = 'call';
+                    if (rsi >= 80.0 && cci >= 150.0 && atR && isLat)  dir = 'put';
+
+                    if (!dir) {
+                        let near = null;
+                        if (rsi <= 25.0 && cci <= -100.0 && atS && isLat) near = 'call';
+                        if (rsi >= 75.0 && cci >= 100.0 && atR && isLat) near = 'put';
+                        if (near) {
+                            io.to(uid).emit('near_miss', {
+                                asset: name, rsi: rsi.toFixed(1), cci: cci.toFixed(1), side: near.toUpperCase(),
+                                reason: 'Cerca de Zona Extrema'
+                            });
+                        }
+                    }
 
                     if (dir) {
                         // Reservar cupo de operación para evitar colisiones en concurrencia

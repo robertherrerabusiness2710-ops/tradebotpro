@@ -40,7 +40,9 @@ const App = () => {
   const [cycleReport, setCycleReport] = useState(null);
   const [liveTrades, setLiveTrades] = useState([]);
   
-  // REFS PARA PERSISTENCIA (SIN PANTALLA BLANCA)
+  // NUEVO: Oportunidades Cercanas y Bitácora
+  const [nearMisses, setNearMisses] = useState([]);
+  const [dailyLogs, setDailyLogs] = useState({});
   const socketRef = useRef(null);
   const iqEmailRef = useRef(null);
   const iqPassRef = useRef(null);
@@ -135,9 +137,26 @@ const App = () => {
 
       socketRef.current.on('live_trade_result', (data) => {
         // Agregar hora actual al resultado
-        const withTime = { ...data, displayTime: new Date().toLocaleTimeString() };
+        const withTime = { ...data, displayTime: new Date().toLocaleTimeString(), date: new Date().toLocaleDateString() };
         setLiveTrades(prev => [withTime, ...prev].slice(0, 10));
         addLog(`${data.winner ? '✅ GANADA' : '❌ PERDIDA'}: ${data.asset}`);
+        
+        // Update bitacora
+        setDailyLogs(prev => {
+          const date = withTime.date;
+          const current = prev[date] || { wins: 0, losses: 0, profit: 0 };
+          return {
+            ...prev,
+            [date]: {
+              wins: current.wins + (data.winner ? 1 : 0),
+              losses: current.losses + (data.winner ? 0 : 1),
+            }
+          };
+        });
+      });
+
+      socketRef.current.on('near_miss', (data) => {
+        setNearMisses(prev => [data, ...prev].slice(0, 15));
       });
 
       socketRef.current.on('live_bot_update', (data) => {
@@ -710,6 +729,78 @@ const App = () => {
                       </div>
                     )}
                  </div>
+               </div>
+
+               {/* SECCIÓN DE BITÁCORA Y OPORTUNIDADES CERCANAS */}
+               <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mt-8">
+                  {/* Bitácora Diaria */}
+                  <div className="bg-[#0d121f] rounded-[40px] border border-white/5 p-8 flex flex-col h-[400px]">
+                      <h3 className="text-2xl font-black text-white italic tracking-tighter uppercase mb-2">Bitácora Diaria</h3>
+                      <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mb-6">Resumen de días positivos y negativos</p>
+                      
+                      <div className="flex-1 overflow-y-auto space-y-4 custom-scrollbar pr-2">
+                        {Object.keys(dailyLogs).length === 0 ? (
+                           <div className="h-full flex flex-col items-center justify-center opacity-20">
+                              <Database className="w-12 h-12 mb-4" />
+                              <span className="text-[10px] uppercase font-black tracking-widest">Sin datos registrados</span>
+                           </div>
+                        ) : (
+                          Object.entries(dailyLogs).reverse().map(([date, stats]) => (
+                            <div key={date} className="bg-white/5 p-4 rounded-3xl border border-white/5 flex justify-between items-center">
+                               <div>
+                                  <div className="text-sm font-black text-white uppercase">{date}</div>
+                                  <div className={`text-[10px] font-bold uppercase mt-1 ${stats.wins >= stats.losses ? 'text-green-400' : 'text-red-400'}`}>
+                                    {stats.wins >= stats.losses ? 'Día Positivo ✅' : 'Día Negativo ❌'}
+                                  </div>
+                               </div>
+                               <div className="flex gap-4">
+                                  <div className="text-center">
+                                     <div className="text-[10px] text-gray-500 font-bold uppercase">Wins</div>
+                                     <div className="text-lg font-black text-green-400">{stats.wins}</div>
+                                  </div>
+                                  <div className="text-center">
+                                     <div className="text-[10px] text-gray-500 font-bold uppercase">Loss</div>
+                                     <div className="text-lg font-black text-red-400">{stats.losses}</div>
+                                  </div>
+                               </div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                  </div>
+
+                  {/* Oportunidades Cercanas */}
+                  <div className="bg-[#0d121f] rounded-[40px] border border-white/5 p-8 flex flex-col h-[400px]">
+                      <h3 className="text-2xl font-black text-white italic tracking-tighter uppercase mb-2">Oportunidades Cercanas</h3>
+                      <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mb-6">Activos que casi cumplen la estrategia</p>
+                      
+                      <div className="flex-1 overflow-y-auto space-y-3 custom-scrollbar pr-2">
+                        {nearMisses.length === 0 ? (
+                           <div className="h-full flex flex-col items-center justify-center opacity-20">
+                              <Activity className="w-12 h-12 mb-4" />
+                              <span className="text-[10px] uppercase font-black tracking-widest">Esperando escaneo...</span>
+                           </div>
+                        ) : (
+                          nearMisses.map((miss, idx) => (
+                            <div key={idx} className="bg-white/5 p-4 rounded-3xl border border-white/5 flex justify-between items-center">
+                               <div className="flex items-center gap-4">
+                                  <div className={`w-1 h-8 rounded-full ${miss.side === 'CALL' ? 'bg-green-500' : 'bg-red-500'}`} />
+                                  <div>
+                                     <div className="text-xs font-black text-white uppercase tracking-tight">{miss.asset}</div>
+                                     <div className="text-[9px] text-gray-500 font-bold mt-1 uppercase">RSI: {miss.rsi} | CCI: {miss.cci}</div>
+                                  </div>
+                               </div>
+                               <div className="text-right">
+                                  <div className={`text-[10px] font-black uppercase ${miss.side === 'CALL' ? 'text-green-500' : 'text-red-500'}`}>
+                                     {miss.side === 'CALL' ? 'POSIBLE COMPRA' : 'POSIBLE VENTA'}
+                                  </div>
+                                  <div className="text-[8px] text-gray-600 font-black mt-1 uppercase">{miss.reason}</div>
+                               </div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                  </div>
                </div>
             </div>
           )}
