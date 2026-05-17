@@ -593,7 +593,26 @@ const App = () => {
                                   <div className="text-[10px] font-black text-blue-400 uppercase tracking-widest">Ciclo {ci+1} · {cycle.startTime} · {cycle.account}</div>
                                   <div className="text-[9px] text-gray-600 font-bold mt-0.5">Inv: ${cycle.amount} por op · {cycle.wins}G / {cycle.losses}P</div>
                                 </div>
-                                <span className={`text-sm font-black ${cycle.profit >= 0 ? 'text-green-400' : 'text-red-400'}`}>{cycle.profit >= 0 ? '+' : '-'}${Math.abs(cycle.profit).toFixed(2)}</span>
+                                <div className="flex items-center gap-3">
+                                  <span className={`text-sm font-black ${cycle.profit >= 0 ? 'text-green-400' : 'text-red-400'}`}>{cycle.profit >= 0 ? '+' : '-'}${Math.abs(cycle.profit).toFixed(2)}</span>
+                                  <button
+                                    onClick={() => {
+                                      setDailyLogs(prev => {
+                                        const dayData = prev[selectedDay];
+                                        if (!dayData) return prev;
+                                        const newCycles = dayData.cycles.filter(c => c.id !== cycle.id);
+                                        const totalWins = newCycles.reduce((s,c) => s+(c.wins||0), 0);
+                                        const totalLosses = newCycles.reduce((s,c) => s+(c.losses||0), 0);
+                                        const totalProfit = newCycles.reduce((s,c) => s+(c.profit||0), 0);
+                                        const updated = { ...prev, [selectedDay]: { cycles: newCycles, totalWins, totalLosses, totalProfit } };
+                                        localStorage.setItem('daily_logs', JSON.stringify(updated));
+                                        return updated;
+                                      });
+                                    }}
+                                    className="w-6 h-6 flex items-center justify-center rounded-full bg-red-500/10 hover:bg-red-500/30 text-red-500 hover:text-red-400 transition-all text-xs font-black border border-red-500/20"
+                                    title="Eliminar este ciclo"
+                                  >×</button>
+                                </div>
                               </div>
                               <div className="space-y-1">
                                 {(cycle.trades || []).map((t, ti) => (

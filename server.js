@@ -99,14 +99,34 @@ const updateScannedAssets = (uid, session, assetName, rsi, cci, progress = 0) =>
     if (idx !== -1) session.scannedAssets[idx] = res; else session.scannedAssets.push(res);
 };
 
-// --- SISTEMA DE MEMORIA / MACHINE LEARNING LITE ---
+// --- SISTEMA DE MEMORIA / MACHINE LEARNING LITE (PERSISTENTE) ---
+const MEMORY_FILE = path.join(__dirname, 'asset_memory.json');
 const assetMemory = new Map();
+
+// Cargar memoria persistida del disco al iniciar
+try {
+    if (fs.existsSync(MEMORY_FILE)) {
+        const saved = JSON.parse(fs.readFileSync(MEMORY_FILE, 'utf8'));
+        for (const [k, v] of Object.entries(saved)) assetMemory.set(k, v);
+        console.log(`[ML] Memoria cargada: ${assetMemory.size} activos recordados`);
+    }
+} catch(e) { console.log('[ML] Sin memoria previa, comenzando fresco'); }
+
+const saveMemory = () => {
+    try {
+        const obj = {};
+        assetMemory.forEach((v, k) => obj[k] = v);
+        fs.writeFileSync(MEMORY_FILE, JSON.stringify(obj, null, 2));
+    } catch(e) {}
+};
+
 const getAssetLimits = (asset) => {
-    if (!assetMemory.has(asset)) assetMemory.set(asset, { rsiCall: 20, rsiPut: 80, cciCall: -150, cciPut: 150 });
+    if (!assetMemory.has(asset)) assetMemory.set(asset, { rsiCall: 20, rsiPut: 80, cciCall: -150, cciPut: 150, wins: 0, losses: 0 });
     return assetMemory.get(asset);
 };
 const punishAsset = (asset, side) => {
     const limits = getAssetLimits(asset);
+    limits.losses = (limits.losses || 0) + 1;
     if (side === 'call') {
         limits.rsiCall = Math.max(5, limits.rsiCall - 3);
         limits.cciCall = Math.max(-300, limits.cciCall - 20);
@@ -114,9 +134,11 @@ const punishAsset = (asset, side) => {
         limits.rsiPut = Math.min(95, limits.rsiPut + 3);
         limits.cciPut = Math.min(300, limits.cciPut + 20);
     }
+    saveMemory();
 };
 const rewardAsset = (asset, side) => {
     const limits = getAssetLimits(asset);
+    limits.wins = (limits.wins || 0) + 1;
     if (side === 'call') {
         limits.rsiCall = Math.min(20, limits.rsiCall + 1);
         limits.cciCall = Math.min(-150, limits.cciCall + 5);
@@ -124,6 +146,7 @@ const rewardAsset = (asset, side) => {
         limits.rsiPut = Math.max(80, limits.rsiPut - 1);
         limits.cciPut = Math.max(150, limits.cciPut - 5);
     }
+    saveMemory();
 };
 
 // --- MOTOR BOT (TOP LEVEL) ---
@@ -336,6 +359,15 @@ function iniciarMotorBot(uid, session, balanceId, amount) {
                                 ts.result = `PROCESANDO... 📈`;
                                 ts.color = 'text-yellow-400 font-black animate-pulse';
                                 io.to(uid).emit('live_bot_update', { phase: `📈 Operación en curso: ${name}`, trades: s.trades, w: s.w, l: s.l, report: s.report });
+
+                                // SINCRONIZAR BALANCE INMEDIATAMENTE TRAS COLOCAR LA ORDEN
+                                try {
+                                    const profNow = await api.getProfile();
+                                    let uD = profNow.balances?.find(b => b.type === 4)?.amount || 0;
+                                    let uR = profNow.balances?.find(b => b.type === 1)?.amount || 0;
+                                    if (session.balances) { session.balances.demo = uD; session.balances.real = uR; }
+                                    io.to(uid).emit('balance_sync', { demo: Number(uD).toFixed(2), real: Number(uR).toFixed(2) });
+                                } catch(e) {}
 
                                 const optionId = order.id || order.option_id || order.active_id || `temp-${Date.now()}`;
                                 const optionIdStr = String(optionId);
