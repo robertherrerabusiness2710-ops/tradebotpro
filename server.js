@@ -209,8 +209,9 @@ function iniciarMotorBot(uid, session, balanceId, amount) {
                         io.to(uid).emit('live_bot_update', { phase: s.phase, trades: s.trades, w: s.w, l: s.l });
                         
                         try {
+                            const entryPrice = currP;
                             const order = await api.sendOrderBinary(id, dir, iqOptionExpired(1), balanceId, 0, amount || s.amount);
-                            const ts = { id: Date.now(), asset: name, side: dir.toUpperCase(), entry: currP, rsi: rsi.toFixed(1), cci: cci.toFixed(1), time: new Date().toLocaleTimeString(), result: 'PROCESANDO...', color: 'text-blue-400' };
+                            const ts = { id: Date.now(), asset: name, side: dir.toUpperCase(), entry: entryPrice, rsi: rsi.toFixed(1), cci: cci.toFixed(1), time: new Date().toLocaleTimeString(), result: 'PROCESANDO...', color: 'text-blue-400' };
                             io.to(uid).emit('trade_executed', ts);
                             s.report.push(ts);
                             
@@ -218,12 +219,30 @@ function iniciarMotorBot(uid, session, balanceId, amount) {
                                 try {
                                     let vC = await api.getCandles(id, 60, 4, Date.now());
                                     vC = vC.sort((a,b)=>a.from-b.from);
-                                    const win = dir === 'call' ? vC[vC.length-2].close > vC[vC.length-3].close : vC[vC.length-2].close < vC[vC.length-3].close;
+                                    // Evaluar usando el precio de cierre de la vela vs precio de entrada exacto
+                                    const win = dir === 'call' ? vC[vC.length-2].close > entryPrice : vC[vC.length-2].close < entryPrice;
                                     if (win) s.w++; else s.l++;
                                     ts.result = win ? 'GANADA ✅' : 'PERDIDA ❌';
                                     ts.color = win ? 'text-green-400' : 'text-red-400';
                                     io.to(uid).emit('live_trade_result', ts);
+                                    io.to(uid).emit('live_bot_update', { phase: `Resultado: ${ts.result}`, trades: s.trades, w: s.w, l: s.l });
+                                    
+                                    // Actualizar balance
+                                    api.getProfile().then(profile => {
+                                        let uD = profile.balances?.find(b => b.type === 4)?.amount || 0;
+                                        let uR = profile.balances?.find(b => b.type === 1)?.amount || 0;
+                                        if (session.balances) { session.balances.demo = uD; session.balances.real = uR; }
+                                        io.to(uid).emit('balance_sync', { demo: Number(uD).toFixed(2), real: Number(uR).toFixed(2) });
+                                    }).catch(()=>{});
+
                                 } catch(e) { ts.result='FINALIZADA'; io.to(uid).emit('live_trade_result', ts); }
+                                
+                                s.completedTrades++;
+                                if (s.completedTrades >= s.cycles) {
+                                    session.botActivo = false;
+                                    session.isLooping = false;
+                                    io.to(uid).emit('live_bot_finished', { report: s.report, w: s.w, l: s.l, trades: s.trades });
+                                }
                             }, 65000);
                         } catch(e) { s.trades--; /* Rollback on failure */ }
                     }
@@ -341,7 +360,7 @@ io.on('connection', (socket) => {
         const typeId = account === 'real' ? 1 : 4;
         const balanceSelect = (profile.balances || []).find(b => b.type === typeId);
         const balanceId = balanceSelect ? balanceSelect.id : profile.balance_id;
-        session.botState = { active: true, phase: 'Iniciando...', trades: 0, w: 0, l: 0, account, amount: Number(amount), cycles: Number(cycles), report: [] };
+        session.botState = { active: true, phase: 'Iniciando...', trades: 0, w: 0, l: 0, account, amount: Number(amount), cycles: Number(cycles), report: [], completedTrades: 0 };
         session.botActivo = true; session.scannedAssets = []; session.isLooping = false;
         iniciarMotorBot(socket.uid, session, balanceId, Number(amount));
     });
