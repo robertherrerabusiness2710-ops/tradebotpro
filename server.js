@@ -275,7 +275,8 @@ function iniciarMotorBot(uid, session, balanceId, amount) {
                                     io.to(uid).emit('live_trade_result', ts);
                                     io.to(uid).emit('live_bot_update', { phase: win ? `Resultado: ${ts.result}` : `🧠 Bot aprendió del error en ${name}`, trades: s.trades, w: s.w, l: s.l });
                                     
-                                    // Actualizar balance
+                                    // Actualizar balance con delay de 2s para que IQ Option liquide el trade
+                                    await new Promise(r => setTimeout(r, 2000));
                                     api.getProfile().then(profile => {
                                         let uD = profile.balances?.find(b => b.type === 4)?.amount || 0;
                                         let uR = profile.balances?.find(b => b.type === 1)?.amount || 0;
@@ -284,9 +285,9 @@ function iniciarMotorBot(uid, session, balanceId, amount) {
                                     }).catch(()=>{});
 
                                 } catch(e) { 
-                                    // Si falla la red, marcamos pérdida por seguridad
-                                    s.l++;
-                                    ts.result='PERDIDA ❌'; 
+                                    // Error de red al evaluar: marcamos resultado como PROCESANDO para no contar doble
+                                    ts.result='PROCESANDO...';
+                                    ts.color='text-yellow-400';
                                     io.to(uid).emit('live_trade_result', ts); 
                                 }
                                 

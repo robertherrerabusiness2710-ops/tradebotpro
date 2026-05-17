@@ -745,7 +745,13 @@ const App = () => {
                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mt-8">
                   {/* Bitácora Diaria */}
                   <div className="bg-[#0d121f] rounded-[40px] border border-white/5 p-8 flex flex-col h-[400px]">
-                      <h3 className="text-2xl font-black text-white italic tracking-tighter uppercase mb-2">Bitácora Diaria</h3>
+                      <div className="flex items-center justify-between mb-2">
+                        <h3 className="text-2xl font-black text-white italic tracking-tighter uppercase">Bitácora Diaria</h3>
+                        <button
+                          onClick={() => { setDailyLogs({}); localStorage.removeItem('daily_logs'); }}
+                          className="text-[9px] font-black text-red-500 hover:text-red-400 border border-red-500/30 hover:border-red-400/50 px-3 py-1.5 rounded-xl uppercase tracking-widest transition-all"
+                        >Limpiar</button>
+                      </div>
                       <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mb-6">Resumen de días positivos y negativos</p>
                       
                       <div className="flex-1 overflow-y-auto space-y-4 custom-scrollbar pr-2">
