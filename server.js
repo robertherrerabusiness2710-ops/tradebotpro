@@ -318,12 +318,59 @@ function iniciarMotorBot(uid, session, balanceId, amount) {
 
 // --- SOCKET SERVER LOGIC ---
 
+let lastCryptoPrices = [];
+const symbols = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT'];
+const fetchPrice = (symbol) => {
+    return new Promise((resolve) => {
+        https.get(`https://api.binance.com/api/v3/ticker/price?symbol=${symbol}`, (res) => {
+            let d = ''; res.on('data', c => d += c);
+            res.on('end', () => {
+                try {
+                    const j = JSON.parse(d);
+                    if (j && j.price) {
+                        resolve({ 
+                            pair: symbol.replace('USDT', ''), 
+                            price: parseFloat(j.price).toLocaleString('en-US', { minimumFractionDigits: 2 }), 
+                            timestamp: new Date().toLocaleTimeString() 
+                        });
+                    } else {
+                        resolve(null);
+                    }
+                } catch(e){ resolve(null); }
+            });
+        }).on('error', () => resolve(null));
+    });
+};
+
+const updateGlobalPrices = async () => {
+    try {
+        const promises = symbols.map(s => fetchPrice(s));
+        const results = await Promise.all(promises);
+        const priceList = results.filter(r => r !== null);
+        if (priceList.length > 0) {
+            lastCryptoPrices = priceList;
+            io.emit('price_multi_update', { prices: lastCryptoPrices });
+        }
+    } catch(e){}
+};
+
+// Actualizar cada 10 segundos
+setInterval(updateGlobalPrices, 10000);
+// E iniciar inmediatamente
+updateGlobalPrices();
+
 io.on('connection', (socket) => {
     console.log('🔌 Cliente Conectado:', socket.id);
 
     socket.on('auth_link', (uid) => {
         socket.join(uid);
         socket.uid = uid;
+        
+        // Enviar precios cargados inmediatamente si existen
+        if (lastCryptoPrices.length > 0) {
+            socket.emit('price_multi_update', { prices: lastCryptoPrices });
+        }
+
         const session = userSessions.get(uid);
         if (session && session.profile) {
             socket.emit('iq_connected', { name: session.profile.name });
@@ -381,22 +428,8 @@ io.on('connection', (socket) => {
                     console.log(`[MAP] Activos OTC descubiertos: ${knownMarkets.size}`);
                 } catch(e){}
 
-                // Monitor de precios
+                // Monitor de balance
                 const mainLoop = setInterval(() => {
-                    const symbols = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT'];
-                    const priceList = [];
-                    symbols.forEach(symbol => {
-                        https.get(`https://api.binance.com/api/v3/ticker/price?symbol=${symbol}`, (res) => {
-                            let d = ''; res.on('data', c => d += c);
-                            res.on('end', () => {
-                                try {
-                                    const j = JSON.parse(d);
-                                    priceList.push({ pair: symbol.replace('USDT', ''), price: parseFloat(j.price).toLocaleString('en-US', { minimumFractionDigits: 2 }), timestamp: new Date().toLocaleTimeString() });
-                                    if (priceList.length === symbols.length) io.to(socket.uid).emit('price_multi_update', { prices: priceList });
-                                } catch(e){}
-                            });
-                        }).on('error', ()=>{});
-                    });
                     // Sync balance
                     socket.emit('balance_sync', { demo: Number(session.balances.demo).toFixed(2), real: Number(session.balances.real).toFixed(2) });
                 }, 10000);
