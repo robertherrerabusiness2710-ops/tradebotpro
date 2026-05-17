@@ -238,7 +238,7 @@ function iniciarMotorBot(uid, session, balanceId, amount) {
             io.to(uid).emit('scan_telemetry', { results: session.scannedAssets });
         }
 
-        const BATCH_SIZE = 15;
+        const BATCH_SIZE = 30;
         
         for (let i = 0; i < ACTIVOS.length; i += BATCH_SIZE) {
             if (!session.botActivo || s.trades >= s.cycles) break;
@@ -250,7 +250,7 @@ function iniciarMotorBot(uid, session, balanceId, amount) {
             await Promise.all(batch.map(async (id, index) => {
                 if (!session.botActivo || s.trades >= s.cycles) return;
                 
-                await new Promise(r => setTimeout(r, index * 35)); // Desfase anti-spam para el broker
+                await new Promise(r => setTimeout(r, index * 20)); // Desfase anti-spam para el broker
                 
                 const name = knownMarkets.get(id) || `ID:${id}`;
 
@@ -461,7 +461,7 @@ function iniciarMotorBot(uid, session, balanceId, amount) {
             
             // Refrescar el UI con los resultados del lote
             io.to(uid).emit('scan_telemetry', { results: session.scannedAssets });
-            await new Promise(r => setTimeout(r, 400)); // Breve pausa entre lotes para que el websocket respire
+            await new Promise(r => setTimeout(r, 200)); // Breve pausa entre lotes para que el websocket respire
         }
         if (session.botActivo && s.trades < s.cycles) {
             s.phase = `⏳ Recargando en 8s... (${s.trades}/${s.cycles})`;
@@ -578,19 +578,19 @@ io.on('connection', (socket) => {
                             const messageJSON = JSON.parse(wsMsgData.toString());
                             
                             if (messageJSON.name === 'profile' || messageJSON.name === 'balance-changed') {
-                                const prof = messageJSON.msg;
+                                const isBalanceChanged = messageJSON.name === 'balance-changed';
+                                const prof = isBalanceChanged ? messageJSON.msg?.current_balance : messageJSON.msg;
+                                
                                 if (prof) {
-                                    // balance-changed envia un objeto diferente al de profile
                                     let uD = session.balances?.demo || 0;
                                     let uR = session.balances?.real || 0;
                                     
                                     if (prof.balances) {
                                         uD = prof.balances.find(b => b.type === 4)?.amount || uD;
                                         uR = prof.balances.find(b => b.type === 1)?.amount || uR;
-                                    } else if (prof.type === 4) {
-                                        uD = prof.amount || uD;
-                                    } else if (prof.type === 1) {
-                                        uR = prof.amount || uR;
+                                    } else if (prof.type === 4 || prof.type === 1) { // balance-changed fallback
+                                        if (prof.type === 4) uD = prof.amount;
+                                        if (prof.type === 1) uR = prof.amount;
                                     }
                                     
                                     if (session.balances) { session.balances.demo = uD; session.balances.real = uR; }
