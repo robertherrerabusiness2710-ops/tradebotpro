@@ -90,6 +90,33 @@ const updateScannedAssets = (uid, session, assetName, rsi, cci, progress = 0) =>
     if (idx !== -1) session.scannedAssets[idx] = res; else session.scannedAssets.push(res);
 };
 
+// --- SISTEMA DE MEMORIA / MACHINE LEARNING LITE ---
+const assetMemory = new Map();
+const getAssetLimits = (asset) => {
+    if (!assetMemory.has(asset)) assetMemory.set(asset, { rsiCall: 20, rsiPut: 80, cciCall: -150, cciPut: 150 });
+    return assetMemory.get(asset);
+};
+const punishAsset = (asset, side) => {
+    const limits = getAssetLimits(asset);
+    if (side === 'call') {
+        limits.rsiCall = Math.max(5, limits.rsiCall - 3);
+        limits.cciCall = Math.max(-300, limits.cciCall - 20);
+    } else {
+        limits.rsiPut = Math.min(95, limits.rsiPut + 3);
+        limits.cciPut = Math.min(300, limits.cciPut + 20);
+    }
+};
+const rewardAsset = (asset, side) => {
+    const limits = getAssetLimits(asset);
+    if (side === 'call') {
+        limits.rsiCall = Math.min(20, limits.rsiCall + 1);
+        limits.cciCall = Math.min(-150, limits.cciCall + 5);
+    } else {
+        limits.rsiPut = Math.max(80, limits.rsiPut - 1);
+        limits.cciPut = Math.max(150, limits.cciPut - 5);
+    }
+};
+
 // --- MOTOR BOT (TOP LEVEL) ---
 
 function iniciarMotorBot(uid, session, balanceId, amount) {
@@ -175,19 +202,20 @@ function iniciarMotorBot(uid, session, balanceId, amount) {
                     
                     updateScannedAssets(uid, session, name, rsi.toFixed(1), cci.toFixed(1), prog);
                     
+                    const limits = getAssetLimits(name);
                     let dir = null;
                     const isLat = esLateralizado(velas);
-                    if (rsi <= 20.0 && cci <= -150.0 && atS && isLat) dir = 'call';
-                    if (rsi >= 80.0 && cci >= 150.0 && atR && isLat)  dir = 'put';
+                    if (rsi <= limits.rsiCall && cci <= limits.cciCall && atS && isLat) dir = 'call';
+                    if (rsi >= limits.rsiPut && cci >= limits.cciPut && atR && isLat)  dir = 'put';
 
                     if (!dir) {
                         let near = null;
-                        if (rsi <= 25.0 && cci <= -100.0 && atS && isLat) near = 'call';
-                        if (rsi >= 75.0 && cci >= 100.0 && atR && isLat) near = 'put';
+                        if (rsi <= limits.rsiCall + 5 && cci <= limits.cciCall + 50 && atS && isLat) near = 'call';
+                        if (rsi >= limits.rsiPut - 5 && cci >= limits.cciPut - 50 && atR && isLat) near = 'put';
                         if (near) {
                             io.to(uid).emit('near_miss', {
                                 asset: name, rsi: rsi.toFixed(1), cci: cci.toFixed(1), side: near.toUpperCase(),
-                                reason: 'Cerca de Zona Extrema'
+                                reason: 'Cerca de Zona Extrema Dinámica'
                             });
                         }
                     }
@@ -221,11 +249,19 @@ function iniciarMotorBot(uid, session, balanceId, amount) {
                                     vC = vC.sort((a,b)=>a.from-b.from);
                                     // Evaluar usando el precio de cierre de la vela vs precio de entrada exacto
                                     const win = dir === 'call' ? vC[vC.length-2].close > entryPrice : vC[vC.length-2].close < entryPrice;
-                                    if (win) s.w++; else s.l++;
+                                    
+                                    if (win) {
+                                        s.w++;
+                                        rewardAsset(name, dir);
+                                    } else {
+                                        s.l++;
+                                        punishAsset(name, dir);
+                                    }
+
                                     ts.result = win ? 'GANADA ✅' : 'PERDIDA ❌';
                                     ts.color = win ? 'text-green-400' : 'text-red-400';
                                     io.to(uid).emit('live_trade_result', ts);
-                                    io.to(uid).emit('live_bot_update', { phase: `Resultado: ${ts.result}`, trades: s.trades, w: s.w, l: s.l });
+                                    io.to(uid).emit('live_bot_update', { phase: win ? `Resultado: ${ts.result}` : `🧠 Bot aprendió del error en ${name}`, trades: s.trades, w: s.w, l: s.l });
                                     
                                     // Actualizar balance
                                     api.getProfile().then(profile => {
