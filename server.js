@@ -576,6 +576,28 @@ io.on('connection', (socket) => {
                     api.getIQOptionWs().socket().on('message', async (wsMsgData) => {
                         try {
                             const messageJSON = JSON.parse(wsMsgData.toString());
+                            
+                            if (messageJSON.name === 'profile' || messageJSON.name === 'balance-changed') {
+                                const prof = messageJSON.msg;
+                                if (prof) {
+                                    // balance-changed envia un objeto diferente al de profile
+                                    let uD = session.balances?.demo || 0;
+                                    let uR = session.balances?.real || 0;
+                                    
+                                    if (prof.balances) {
+                                        uD = prof.balances.find(b => b.type === 4)?.amount || uD;
+                                        uR = prof.balances.find(b => b.type === 1)?.amount || uR;
+                                    } else if (prof.type === 4) {
+                                        uD = prof.amount || uD;
+                                    } else if (prof.type === 1) {
+                                        uR = prof.amount || uR;
+                                    }
+                                    
+                                    if (session.balances) { session.balances.demo = uD; session.balances.real = uR; }
+                                    io.to(uid).emit('balance_sync', { demo: Number(uD).toFixed(2), real: Number(uR).toFixed(2) });
+                                }
+                            }
+
                             if (messageJSON.name === 'option-closed' || messageJSON.name === 'digital-option-closed') {
                                 const msg = messageJSON.msg;
                                 if (!msg) return;
