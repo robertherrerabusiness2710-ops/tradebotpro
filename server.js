@@ -165,18 +165,18 @@ function iniciarMotorBot(uid, session, balanceId, amount) {
                     const minL = Math.min(...last20.map(v => v.min || v.low || v.close));
                     const currP = velas[velas.length-1].close;
                     const h_dist = maxH - minL;
-                    const atR = h_dist === 0 || currP >= maxH - (h_dist * 0.25);
-                    const atS = h_dist === 0 || currP <= minL + (h_dist * 0.25);
+                    const atR = h_dist === 0 || currP >= maxH - (h_dist * 0.35);
+                    const atS = h_dist === 0 || currP <= minL + (h_dist * 0.35);
 
-                    const rScore = rsi >= 90 || rsi <= 10 ? 100 : Math.min(100, (Math.abs(rsi-50)/40)*100);
-                    const cScore = Math.abs(cci) >= 200 ? 100 : Math.min(100, (Math.abs(cci)/200)*100);
+                    const rScore = rsi >= 80 || rsi <= 20 ? 100 : Math.min(100, (Math.abs(rsi-50)/30)*100);
+                    const cScore = Math.abs(cci) >= 150 ? 100 : Math.min(100, (Math.abs(cci)/150)*100);
                     const prog = ((rScore + cScore)/2).toFixed(0);
                     
                     updateScannedAssets(uid, session, name, rsi.toFixed(1), cci.toFixed(1), prog);
                     
                     let dir = null;
-                    if (rsi <= 10.0 && cci <= -200.0 && atS) dir = 'call';
-                    if (rsi >= 90.0 && cci >= 200.0 && atR)  dir = 'put';
+                    if (rsi <= 20.0 && cci <= -150.0 && atS) dir = 'call';
+                    if (rsi >= 80.0 && cci >= 150.0 && atR)  dir = 'put';
                     if (dir && !esLateralizado(velas)) dir = null;
 
                     if (dir) {
