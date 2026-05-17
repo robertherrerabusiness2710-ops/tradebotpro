@@ -394,7 +394,16 @@ function iniciarMotorBot(uid, session, balanceId, amount) {
                                 s.trades--;
                                 const idxRep = s.report.indexOf(ts);
                                 if (idxRep !== -1) s.report.splice(idxRep, 1);
-                                io.to(uid).emit('live_bot_update', { phase: `❌ Orden rechazada: ${name}`, trades: s.trades, w: s.w, l: s.l, report: s.report });
+                                io.to(uid).emit('live_bot_update', { phase: `⚠️ ${name} no disponible, buscando otro activo...`, trades: s.trades, w: s.w, l: s.l, report: s.report });
+                                
+                                // CRÍTICO: Si el loop ya se detuvo pero aún faltan ciclos, reiniciarlo
+                                if (!session.isLooping && session.botActivo && s.trades < s.cycles) {
+                                    setTimeout(() => iniciarMotorBot(uid, session, balanceId, amount), 2000);
+                                }
+                                
+                                // Si ya no hay operaciones abiertas y no hay loop, verificar si el ciclo terminó
+                                s.completedTrades++;
+                                checkCycleCompletion(uid, session);
                             }
                         })();
                     }
