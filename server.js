@@ -246,7 +246,7 @@ function iniciarMotorBot(uid, session, balanceId, amount) {
             io.to(uid).emit('scan_telemetry', { results: session.scannedAssets });
         }
 
-        const BATCH_SIZE = 30;
+        const BATCH_SIZE = 15;
         let foundNearMissesInThisLoop = [];
         
         for (let i = 0; i < ACTIVOS.length; i += BATCH_SIZE) {
@@ -261,7 +261,7 @@ function iniciarMotorBot(uid, session, balanceId, amount) {
             await Promise.all(batch.map(async (id, index) => {
                 if (!session.botActivo || s.trades >= s.cycles) return;
                 
-                await new Promise(r => setTimeout(r, index * 20)); // Desfase anti-spam para el broker
+                await new Promise(r => setTimeout(r, index * 40)); // Desfase anti-spam estricto para evitar baneos del broker
                 
                 const name = knownMarkets.get(id) || `ID:${id}`;
 
@@ -473,7 +473,7 @@ function iniciarMotorBot(uid, session, balanceId, amount) {
             
             // Refrescar el UI con los resultados del lote
             io.to(uid).emit('scan_telemetry', { results: session.scannedAssets });
-            await new Promise(r => setTimeout(r, 200)); // Breve pausa entre lotes para que el websocket respire
+            await new Promise(r => setTimeout(r, 500)); // Breve pausa entre lotes para que el websocket respire
         }
         if (session.botActivo && s.trades < s.cycles) {
             session.focusAssets = foundNearMissesInThisLoop.length > 0 ? [...new Set(foundNearMissesInThisLoop)] : [];
