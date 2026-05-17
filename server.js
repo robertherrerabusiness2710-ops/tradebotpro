@@ -237,7 +237,13 @@ function iniciarMotorBot(uid, session, balanceId, amount) {
                         io.to(uid).emit('live_bot_update', { phase: s.phase, trades: s.trades, w: s.w, l: s.l });
                         
                         try {
-                            const entryPrice = currP;
+                            let entryPrice = currP;
+                            // RE-FETCH EXACT PRICE JUST BEFORE ORDER TO AVOID 58-SECOND SLIPPAGE
+                            try {
+                                const vN = await api.getCandles(id, 60, 2, Date.now());
+                                if (vN && vN.length>0) entryPrice = vN[vN.length-1].close;
+                            } catch(e) {}
+                            
                             const order = await api.sendOrderBinary(id, dir, iqOptionExpired(1), balanceId, 0, amount || s.amount);
                             const ts = { id: Date.now(), asset: name, side: dir.toUpperCase(), entry: entryPrice, rsi: rsi.toFixed(1), cci: cci.toFixed(1), time: new Date().toLocaleTimeString(), result: 'PROCESANDO...', color: 'text-blue-400' };
                             io.to(uid).emit('trade_executed', ts);
