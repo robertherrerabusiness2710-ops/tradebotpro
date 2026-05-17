@@ -62,17 +62,26 @@ const calcularCCI = (velas, periodos = 14) => {
 };
 
 const esLateralizado = (velas) => {
-    if (velas.length < 10) return true;
-    const last10 = velas.slice(-10);
-    const sma = last10.reduce((sum, v) => sum + v.close, 0) / 10;
+    if (velas.length < 15) return false;
+    const last15 = velas.slice(-15);
+    const sma = last15.reduce((sum, v) => sum + v.close, 0) / 15;
+
+    // 1. Contar cruces del precio sobre la SMA (mercado lateral = oscila sobre la media)
     let crosses = 0;
-    for(let i=1; i<last10.length; i++) {
-        if((last10[i-1].close < sma && last10[i].close >= sma) || (last10[i-1].close > sma && last10[i].close <= sma)) {
+    for (let i = 1; i < last15.length; i++) {
+        if ((last15[i-1].close < sma && last15[i].close >= sma) ||
+            (last15[i-1].close > sma && last15[i].close <= sma)) {
             crosses++;
         }
     }
-    // Relajado: 1 cruce ya indica zona de rebote, suficiente para operar
-    return crosses >= 1;
+
+    // 2. Medir el rango total de las últimas 15 velas (banda de precio)
+    const maxH = Math.max(...last15.map(v => v.max || v.high || v.close));
+    const minL = Math.min(...last15.map(v => v.min || v.low || v.close));
+    const rangeRatio = sma > 0 ? (maxH - minL) / sma : 1;
+
+    // Lateral = mínimo 2 cruces de SMA Y rango total ≤ 4% del precio
+    return crosses >= 2 && rangeRatio <= 0.04;
 };
 
 const iqOptionExpired = (m) => {
@@ -245,9 +254,12 @@ function iniciarMotorBot(uid, session, balanceId, amount) {
                     const limits = getAssetLimits(name);
                     let dir = null;
                     const isLat = esLateralizado(velas);
-                    // isLat es un indicador suave (bonus), no un bloqueo absoluto
-                    if (rsi <= limits.rsiCall && cci <= limits.cciCall && atS) dir = 'call';
-                    if (rsi >= limits.rsiPut  && cci >= limits.cciPut  && atR)  dir = 'put';
+                    
+                    // LATERALIZACIÓN ES OBLIGATORIA: sin ella la estrategia RSI+CCI falla en tendencia
+                    if (isLat) {
+                        if (rsi <= limits.rsiCall && cci <= limits.cciCall && atS) dir = 'call';
+                        if (rsi >= limits.rsiPut  && cci >= limits.cciPut  && atR)  dir = 'put';
+                    }
 
                     if (!dir) {
                         // Oportunidades cercanas: umbrales MUY amplios para capturar señales en desarrollo
