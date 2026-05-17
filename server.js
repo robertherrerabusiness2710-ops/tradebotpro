@@ -55,7 +55,7 @@ const calcularRSI = (velas, periodos = 6) => {
 const calcularCCI = (velas, periodos = 14) => {
     if (velas.length < periodos) return 0;
     const slice = velas.slice(-periodos);
-    const tps = slice.map(c => (c.max + c.min + c.close) / 3);
+    const tps = slice.map(c => ((c.max || c.high || c.close) + (c.min || c.low || c.close) + c.close) / 3);
     const sma = tps.reduce((a, b) => a + b, 0) / periodos;
     const md = tps.reduce((a, b) => a + Math.abs(b - sma), 0) / periodos;
     return md === 0 ? 0 : (tps[tps.length - 1] - sma) / (0.015 * md);
@@ -71,8 +71,8 @@ const esLateralizado = (velas) => {
             crosses++;
         }
     }
-    // Si cruza la media 2 o más veces en 10 velas, está rebotando (lateral). Si no cruza o cruza solo 1 vez, es tendencia pura.
-    return crosses >= 2;
+    // Relajado: 1 cruce ya indica zona de rebote, suficiente para operar
+    return crosses >= 1;
 };
 
 const iqOptionExpired = (m) => {
@@ -119,6 +119,33 @@ const rewardAsset = (asset, side) => {
 
 // --- MOTOR BOT (TOP LEVEL) ---
 
+// --- MOTOR BOT (TOP LEVEL) ---
+
+const checkCycleCompletion = (uid, session) => {
+    const s = session.botState;
+    if (!s) return;
+    
+    // El ciclo termina cuando se han completado y evaluado todas las operaciones colocadas,
+    // O si ya no hay loop activo y no quedan operaciones abiertas
+    const allDone = s.completedTrades >= s.trades;
+    const cyclesDone = s.trades >= s.cycles;
+    const noLoop = !session.botActivo || !session.isLooping;
+    
+    if (allDone && (cyclesDone || noLoop)) {
+        session.botActivo = false;
+        session.isLooping = false;
+        if (session.botTimeout) clearTimeout(session.botTimeout);
+        
+        io.to(uid).emit('live_bot_finished', { 
+            id: s.id,
+            trades: s.trades, 
+            w: s.w, 
+            l: s.l, 
+            report: s.report 
+        });
+    }
+};
+
 function iniciarMotorBot(uid, session, balanceId, amount) {
     if (session.isLooping) return;
     session.isLooping = true;
@@ -127,7 +154,7 @@ function iniciarMotorBot(uid, session, balanceId, amount) {
 
     const fetchCandlesSafe = (activeId) => {
         return new Promise((resolve) => {
-            const timeout = setTimeout(() => resolve(null), 2000);
+            const timeout = setTimeout(() => resolve(null), 4000); // Aumentado de 2s a 4s
             api.getCandles(activeId, 60, 200, Date.now())
                 .then(velas => {
                     clearTimeout(timeout);
@@ -148,14 +175,27 @@ function iniciarMotorBot(uid, session, balanceId, amount) {
         const s = session.botState;
         if (!s || !session.botActivo) { session.isLooping = false; return; }
         if (s.trades >= s.cycles) {
-            session.botActivo = false; session.isLooping = false;
-            io.to(uid).emit('live_bot_finished', { trades: s.trades, w: s.w, l: s.l, report: s.report });
+            // Detener el escáner recursivo, pero NO emitir live_bot_finished aquí!
+            // Porque las operaciones colocadas todavía se están resolviendo en segundo plano.
+            session.isLooping = false;
+            s.phase = `⏳ Esperando cierre de las últimas operaciones...`;
+            io.to(uid).emit('live_bot_update', { phase: s.phase, trades: s.trades, w: s.w, l: s.l, report: s.report });
             return;
         }
 
         const ACTIVOS = [];
         knownMarkets.forEach((name, id) => ACTIVOS.push(id));
-        if (ACTIVOS.length === 0) [816, 817, 1072, 1073, 1074, 994, 993, 1000, 1001, 1002, 1003, 1004, 1005, 76, 77, 78, 81].forEach(id => ACTIVOS.push(id));
+        // Fallback amplio con IDs conocidos de IQ Option si aún no se cargó el mapa
+        if (ACTIVOS.length === 0) {
+            // Crypto OTC + Indices OTC + Acciones OTC + Forex OTC populares
+            [816, 817, 818, 819, 820, 821, 822, 823, 824, 825, 
+             1072, 1073, 1074, 1075, 1076, 1077, 1078, 1079, 1080,
+             994, 993, 992, 991, 990, 989, 988, 987, 986, 985,
+             1000, 1001, 1002, 1003, 1004, 1005, 1006, 1007, 1008,
+             76, 77, 78, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90,
+             3, 4, 5, 6, 7, 8, 9, 10, 36, 37, 38, 39
+            ].forEach(id => ACTIVOS.push(id));
+        }
 
         // Inyectar placeholders si está vacío
         if (session.scannedAssets.length === 0) {
@@ -173,7 +213,7 @@ function iniciarMotorBot(uid, session, balanceId, amount) {
             
             const batch = ACTIVOS.slice(i, i + BATCH_SIZE);
             s.phase = `🔍 Analizando Lote [${i+1} a ${Math.min(i+BATCH_SIZE, ACTIVOS.length)} de ${ACTIVOS.length}]...`;
-            io.to(uid).emit('live_bot_update', { phase: s.phase, trades: s.trades, w: s.w, l: s.l });
+            io.to(uid).emit('live_bot_update', { phase: s.phase, trades: s.trades, w: s.w, l: s.l, report: s.report });
 
             await Promise.all(batch.map(async (id, index) => {
                 if (!session.botActivo || s.trades >= s.cycles) return;
@@ -184,7 +224,7 @@ function iniciarMotorBot(uid, session, balanceId, amount) {
 
                 try {
                     const velas = await fetchCandlesSafe(id);
-                    if (!velas || velas.length < 15) return; // Si falla por rate-limit, reintenta el próximo ciclo sin matarlo
+                    if (!velas || velas.length < 15) return;
 
                     const rsi = calcularRSI(velas, 6);
                     const cci = calcularCCI(velas, 14);
@@ -205,17 +245,22 @@ function iniciarMotorBot(uid, session, balanceId, amount) {
                     const limits = getAssetLimits(name);
                     let dir = null;
                     const isLat = esLateralizado(velas);
-                    if (rsi <= limits.rsiCall && cci <= limits.cciCall && atS && isLat) dir = 'call';
-                    if (rsi >= limits.rsiPut && cci >= limits.cciPut && atR && isLat)  dir = 'put';
+                    // isLat es un indicador suave (bonus), no un bloqueo absoluto
+                    if (rsi <= limits.rsiCall && cci <= limits.cciCall && atS) dir = 'call';
+                    if (rsi >= limits.rsiPut  && cci >= limits.cciPut  && atR)  dir = 'put';
 
                     if (!dir) {
+                        // Oportunidades cercanas: umbrales MUY amplios para capturar señales en desarrollo
                         let near = null;
-                        if (rsi <= limits.rsiCall + 5 && cci <= limits.cciCall + 50 && atS && isLat) near = 'call';
-                        if (rsi >= limits.rsiPut - 5 && cci >= limits.cciPut - 50 && atR && isLat) near = 'put';
+                        // CALL: RSI por debajo del umbral+15 Y CCI por debajo del umbral+100
+                        if (rsi <= limits.rsiCall + 15 && cci <= limits.cciCall + 100) near = 'call';
+                        // PUT: RSI por encima del umbral-15 Y CCI por encima del umbral-100
+                        if (rsi >= limits.rsiPut  - 15 && cci >= limits.cciPut  - 100) near = 'put';
                         if (near) {
+                            const distRsi = near === 'call' ? (limits.rsiCall - rsi).toFixed(1) : (rsi - limits.rsiPut).toFixed(1);
                             io.to(uid).emit('near_miss', {
                                 asset: name, rsi: rsi.toFixed(1), cci: cci.toFixed(1), side: near.toUpperCase(),
-                                reason: 'Cerca de Zona Extrema Dinámica'
+                                reason: `RSI a ${distRsi} pts del umbral`
                             });
                         }
                     }
@@ -225,80 +270,133 @@ function iniciarMotorBot(uid, session, balanceId, amount) {
                         if (s.trades >= s.cycles) return;
                         s.trades++;
 
-                        if (new Date().getSeconds() < 58) {
-                            s.phase = `⏳ ESPERANDO CIERRE VELA ${name}...`;
-                            io.to(uid).emit('live_bot_update', { phase: s.phase, trades: s.trades, w: s.w, l: s.l });
-                            await new Promise(r => setTimeout(r, (58 - new Date().getSeconds()) * 1000));
-                        }
+                        // CREAR REGISTRO INMEDIATO EN 'OPERACIONES EN CURSO' PARA EVITAR RETARDOS VISUALES
+                        const ts = { 
+                            id: Date.now(), 
+                            asset: name, 
+                            side: dir.toUpperCase(), 
+                            entry: currP, 
+                            rsi: rsi.toFixed(1), 
+                            cci: cci.toFixed(1), 
+                            time: new Date().toLocaleTimeString(), 
+                            result: 'PROCESANDO VELA... ⏳', 
+                            color: 'text-yellow-500 font-black animate-pulse' 
+                        };
+                        s.report.push(ts);
+                        io.to(uid).emit('trade_executed', ts);
                         
-                        if (!session.botActivo) { s.trades--; return; } // Rollback si el bot se apagó mientras esperaba
+                        // Emitir de inmediato para que aparezca en el Dashboard / Strategies en menos de 10ms
+                        io.to(uid).emit('live_bot_update', { 
+                            phase: `🎯 Señal detectada: ${name}`, 
+                            trades: s.trades, 
+                            w: s.w, 
+                            l: s.l, 
+                            report: s.report 
+                        });
 
-                        s.phase = `🎯 ${dir.toUpperCase()} → ${name}`;
-                        io.to(uid).emit('live_bot_update', { phase: s.phase, trades: s.trades, w: s.w, l: s.l });
-                        
-                        try {
-                            let entryPrice = currP;
-                            // RE-FETCH EXACT PRICE JUST BEFORE ORDER TO AVOID 58-SECOND SLIPPAGE
+                        // EJECUTAR EN SEGUNDO PLANO DE FORMA NO-BLOQUEANTE (FIRE-AND-FORGET)
+                        (async () => {
                             try {
-                                const vN = await api.getCandles(id, 60, 2, Date.now());
-                                if (vN && vN.length>0) entryPrice = vN[vN.length-1].close;
-                            } catch(e) {}
-                            
-                            const order = await api.sendOrderBinary(id, dir, iqOptionExpired(1), balanceId, 0, amount || s.amount);
-                            const ts = { id: Date.now(), asset: name, side: dir.toUpperCase(), entry: entryPrice, rsi: rsi.toFixed(1), cci: cci.toFixed(1), time: new Date().toLocaleTimeString(), result: 'PROCESANDO...', color: 'text-blue-400' };
-                            io.to(uid).emit('trade_executed', ts);
-                            s.report.push(ts);
-                            
-                            setTimeout(async () => {
+                                if (new Date().getSeconds() < 58) {
+                                    await new Promise(r => setTimeout(r, (58 - new Date().getSeconds()) * 1000));
+                                }
+
+                                if (!session.botActivo) { 
+                                    s.trades--; 
+                                    const indexRep = s.report.indexOf(ts);
+                                    if (indexRep !== -1) s.report.splice(indexRep, 1);
+                                    io.to(uid).emit('live_bot_update', { phase: `Apagado. Cancelada: ${name}`, trades: s.trades, w: s.w, l: s.l, report: s.report });
+                                    return; 
+                                }
+
+                                ts.result = `ENVIANDO A BROKER... 🎯`;
+                                io.to(uid).emit('live_bot_update', { phase: `🎯 Enviando orden: ${name}`, trades: s.trades, w: s.w, l: s.l, report: s.report });
+
+                                let entryPrice = currP;
                                 try {
-                                    let vC = await fetchCandlesSafe(id, 60, 5);
-                                    let closePrice = entryPrice; // Default a empate
-                                    
-                                    if (vC && vC.length > 0) {
-                                        vC = vC.sort((a,b)=>a.from-b.from);
-                                        // Obtener el cierre de la vela anterior a la actual (la vela que expiró)
-                                        closePrice = vC.length > 1 ? vC[vC.length-2].close : vC[vC.length-1].close;
-                                    }
+                                    const vN = await api.getCandles(id, 60, 2, Date.now());
+                                    if (vN && vN.length > 0) entryPrice = vN[vN.length - 1].close;
+                                } catch(e) {}
+                                ts.entry = entryPrice;
 
-                                    const win = dir === 'call' ? closePrice > entryPrice : closePrice < entryPrice;
-                                    
-                                    if (win) {
-                                        s.w++;
-                                        rewardAsset(name, dir);
-                                    } else {
-                                        s.l++;
-                                        punishAsset(name, dir);
-                                    }
-
-                                    ts.result = win ? 'GANADA ✅' : 'PERDIDA ❌';
-                                    ts.color = win ? 'text-green-400' : 'text-red-400';
-                                    io.to(uid).emit('live_trade_result', ts);
-                                    io.to(uid).emit('live_bot_update', { phase: win ? `Resultado: ${ts.result}` : `🧠 Bot aprendió del error en ${name}`, trades: s.trades, w: s.w, l: s.l });
-                                    
-                                    // Actualizar balance con delay de 2s para que IQ Option liquide el trade
-                                    await new Promise(r => setTimeout(r, 2000));
-                                    api.getProfile().then(profile => {
-                                        let uD = profile.balances?.find(b => b.type === 4)?.amount || 0;
-                                        let uR = profile.balances?.find(b => b.type === 1)?.amount || 0;
-                                        if (session.balances) { session.balances.demo = uD; session.balances.real = uR; }
-                                        io.to(uid).emit('balance_sync', { demo: Number(uD).toFixed(2), real: Number(uR).toFixed(2) });
-                                    }).catch(()=>{});
-
-                                } catch(e) { 
-                                    // Error de red al evaluar: marcamos resultado como PROCESANDO para no contar doble
-                                    ts.result='PROCESANDO...';
-                                    ts.color='text-yellow-400';
-                                    io.to(uid).emit('live_trade_result', ts); 
-                                }
+                                const order = await api.sendOrderBinary(id, dir, iqOptionExpired(1), balanceId, 0, amount || s.amount);
                                 
-                                s.completedTrades++;
-                                if (s.completedTrades >= s.cycles) {
-                                    session.botActivo = false;
-                                    session.isLooping = false;
-                                    io.to(uid).emit('live_bot_finished', { report: s.report, w: s.w, l: s.l, trades: s.trades });
+                                ts.result = `PROCESANDO... 📈`;
+                                ts.color = 'text-yellow-400 font-black animate-pulse';
+                                io.to(uid).emit('live_bot_update', { phase: `📈 Operación en curso: ${name}`, trades: s.trades, w: s.w, l: s.l, report: s.report });
+
+                                const optionId = order.id || order.option_id || order.active_id || `temp-${Date.now()}`;
+                                const optionIdStr = String(optionId);
+
+                                const fallbackTimeout = setTimeout(async () => {
+                                    const activeTrade = session.activeTrades?.get(optionIdStr);
+                                    if (activeTrade && !activeTrade.resolved) {
+                                        activeTrade.resolved = true;
+                                        try {
+                                            let vC = await fetchCandlesSafe(id);
+                                            let closePrice = entryPrice;
+                                            if (vC && vC.length > 0) {
+                                                vC = vC.sort((a,b)=>a.from-b.from);
+                                                closePrice = vC.length > 1 ? vC[vC.length-2].close : vC[vC.length-1].close;
+                                            }
+                                            const win = dir === 'call' ? closePrice > entryPrice : closePrice < entryPrice;
+                                            const isEqual = closePrice === entryPrice;
+
+                                            if (win) {
+                                                s.w++;
+                                                rewardAsset(name, dir);
+                                            } else if (!isEqual) {
+                                                s.l++;
+                                                punishAsset(name, dir);
+                                            }
+
+                                            ts.result = win ? 'GANADA ✅' : isEqual ? 'EMPATE 🤝' : 'PERDIDA ❌';
+                                            ts.color = win ? 'text-green-400 font-black' : isEqual ? 'text-yellow-400 font-black' : 'text-red-400 font-black';
+
+                                            io.to(uid).emit('live_trade_result', ts);
+                                            io.to(uid).emit('live_bot_update', { 
+                                                phase: win ? `Resultado: ${ts.result} (F)` : `🧠 Bot aprendió de ${name} (F)`, 
+                                                trades: s.trades, 
+                                                w: s.w, 
+                                                l: s.l,
+                                                report: s.report
+                                            });
+
+                                            s.completedTrades++;
+                                            checkCycleCompletion(uid, session);
+                                        } catch(e) {
+                                            ts.result = 'PROCESANDO...';
+                                            ts.color = 'text-yellow-400 font-black';
+                                            io.to(uid).emit('live_trade_result', ts);
+                                            s.completedTrades++;
+                                            checkCycleCompletion(uid, session);
+                                        }
+                                        session.activeTrades?.delete(optionIdStr);
+                                        
+                                        // Sincronizar balance
+                                        try {
+                                            const prof = await api.getProfile();
+                                            let uD = prof.balances?.find(b => b.type === 4)?.amount || 0;
+                                            let uR = prof.balances?.find(b => b.type === 1)?.amount || 0;
+                                            if (session.balances) { session.balances.demo = uD; session.balances.real = uR; }
+                                            io.to(uid).emit('balance_sync', { demo: Number(uD).toFixed(2), real: Number(uR).toFixed(2) });
+                                        } catch(e){}
+                                    }
+                                }, 70000);
+
+                                if (session.activeTrades) {
+                                    session.activeTrades.set(optionIdStr, {
+                                        ts, dir, name, id, entryPrice, resolved: false, timeout: fallbackTimeout
+                                    });
                                 }
-                            }, 65000);
-                        } catch(e) { s.trades--; /* Rollback on failure */ }
+
+                            } catch(err) {
+                                s.trades--;
+                                const idxRep = s.report.indexOf(ts);
+                                if (idxRep !== -1) s.report.splice(idxRep, 1);
+                                io.to(uid).emit('live_bot_update', { phase: `❌ Orden rechazada: ${name}`, trades: s.trades, w: s.w, l: s.l, report: s.report });
+                            }
+                        })();
                     }
                 } catch(e) {}
             }));
@@ -309,7 +407,7 @@ function iniciarMotorBot(uid, session, balanceId, amount) {
         }
         if (session.botActivo && s.trades < s.cycles) {
             s.phase = `⏳ Recargando en 8s... (${s.trades}/${s.cycles})`;
-            io.to(uid).emit('live_bot_update', { phase: s.phase, trades: s.trades, w: s.w, l: s.l });
+            io.to(uid).emit('live_bot_update', { phase: s.phase, trades: s.trades, w: s.w, l: s.l, report: s.report });
             session.botTimeout = setTimeout(loop, 8000);
         } else { session.isLooping = false; }
     };
@@ -403,10 +501,101 @@ io.on('connection', (socket) => {
             if (profile) {
                 let userDemo = profile.balances?.find(b => b.type === 4)?.amount || 0;
                 let userReal = profile.balances?.find(b => b.type === 1)?.amount || 0;
-                const session = { api, profile, balances: { demo: userDemo, real: userReal }, botActivo: false, isLooping: false };
+                const session = { 
+                    api, 
+                    profile, 
+                    balances: { demo: userDemo, real: userReal }, 
+                    botActivo: false, 
+                    isLooping: false,
+                    activeTrades: new Map()
+                };
                 userSessions.set(uid, session);
                 socket.emit('iq_connected', { name: profile.name });
                 socket.emit('balance_sync', { demo: Number(userDemo).toFixed(2), real: Number(userReal).toFixed(2) });
+
+                // REGISTRAR ESCUCHADOR EN VIVO PARA LIQUIDACIÓN DE OPERACIONES EN EL BROKER
+                try {
+                    api.getIQOptionWs().socket().on('message', async (wsMsgData) => {
+                        try {
+                            const messageJSON = JSON.parse(wsMsgData.toString());
+                            if (messageJSON.name === 'option-closed' || messageJSON.name === 'digital-option-closed') {
+                                const msg = messageJSON.msg;
+                                if (!msg) return;
+                                
+                                const optionId = String(msg.option_id || msg.id);
+                                let trade = session.activeTrades?.get(optionId);
+                                
+                                // FALLBACK DE CONEXIÓN EXTREMO: 
+                                // Si la orden se colocó pero falló la respuesta de sendOrderBinary,
+                                // buscamos una operación coincidente en progreso en s.report.
+                                if (!trade && session.botState?.report) {
+                                    const activeId = msg.active_id || msg.active;
+                                    const assetName = knownMarkets.get(Number(activeId));
+                                    if (assetName) {
+                                        const sideStr = (msg.direction || msg.side || '').toUpperCase();
+                                        const found = session.botState.report.find(t => 
+                                            t.asset === assetName && 
+                                            t.side === sideStr && 
+                                            (t.result === 'PROCESANDO...' || t.result === 'PROCESANDO VELA... ⏳' || t.result === 'ENVIANDO A BROKER... 🎯' || t.result === 'PROCESANDO... 📈' || t.result === 'EN CURSO 📈')
+                                        );
+                                        if (found) {
+                                            trade = {
+                                                ts: found,
+                                                dir: (msg.direction || msg.side || '').toLowerCase(),
+                                                name: assetName,
+                                                resolved: false
+                                            };
+                                        }
+                                    }
+                                }
+                                
+                                if (trade && !trade.resolved) {
+                                    trade.resolved = true;
+                                    if (trade.timeout) clearTimeout(trade.timeout);
+                                    
+                                    const isWin = msg.win === 'win' || msg.result === 'win';
+                                    const isEqual = msg.win === 'equal' || msg.result === 'equal';
+                                    
+                                    const s = session.botState;
+                                    if (s) {
+                                        if (isWin) {
+                                            s.w++;
+                                            rewardAsset(trade.name, trade.dir);
+                                        } else if (!isEqual) {
+                                            s.l++;
+                                            punishAsset(trade.name, trade.dir);
+                                        }
+                                        
+                                        trade.ts.result = isWin ? 'GANADA ✅' : isEqual ? 'EMPATE 🤝' : 'PERDIDA ❌';
+                                        trade.ts.color = isWin ? 'text-green-400 font-black' : isEqual ? 'text-yellow-400 font-black' : 'text-red-400 font-black';
+                                        
+                                        io.to(uid).emit('live_trade_result', trade.ts);
+                                        io.to(uid).emit('live_bot_update', { 
+                                            phase: isWin ? `Resultado: ${trade.ts.result}` : `🧠 Bot aprendió de ${trade.name}`, 
+                                            trades: s.trades, 
+                                            w: s.w, 
+                                            l: s.l,
+                                            report: s.report
+                                        });
+                                        
+                                        s.completedTrades++;
+                                        checkCycleCompletion(uid, session);
+                                    }
+                                    session.activeTrades.delete(optionId);
+                                    
+                                    // Sincronizar balance inmediatamente después de liquidación
+                                    try {
+                                        const prof = await api.getProfile();
+                                        let uD = prof.balances?.find(b => b.type === 4)?.amount || 0;
+                                        let uR = prof.balances?.find(b => b.type === 1)?.amount || 0;
+                                        if (session.balances) { session.balances.demo = uD; session.balances.real = uR; }
+                                        io.to(uid).emit('balance_sync', { demo: Number(uD).toFixed(2), real: Number(uR).toFixed(2) });
+                                    } catch(e){}
+                                }
+                            }
+                        } catch(e){}
+                    });
+                } catch(e){}
 
                 // Mapeo inicial de activos
                 try {
@@ -415,25 +604,82 @@ io.on('connection', (socket) => {
                     const exploit = (obj, depth = 0) => {
                         if (!obj || depth > 5) return;
                         if ((obj.active_id || obj.id) && (obj.name || obj.active_name)) {
-                            let n = (obj.name || obj.active_name).toLowerCase();
-                            // SOLO ACEPTAR ACTIVOS OTC (divisas, acciones, cripto)
-                            if (n.includes('otc')) {
-                                let clean = (obj.name || obj.active_name).replace('front.', '').replace('binary-', '').replace('-OTC', ' (OTC)').toUpperCase();
-                                knownMarkets.set(Number(obj.active_id || obj.id), clean);
+                            const rawName = (obj.name || obj.active_name || '');
+                            const cleanName = rawName.replace('front.', '').replace('binary-', '').replace('-OTC', ' (OTC)').toUpperCase();
+                            const activeIdNum = Number(obj.active_id || obj.id);
+                            if (activeIdNum > 0 && cleanName) {
+                                knownMarkets.set(activeIdNum, cleanName);
                             }
                         }
                         for (const k in obj) if (typeof obj[k] === 'object') exploit(obj[k], depth + 1);
                     };
                     exploit(initData);
-                    console.log(`[MAP] Activos OTC descubiertos: ${knownMarkets.size}`);
+                    console.log(`[MAP] Activos totales descubiertos: ${knownMarkets.size}`);
                 } catch(e){}
 
                 // Monitor de balance
                 const mainLoop = setInterval(() => {
-                    // Sync balance
                     socket.emit('balance_sync', { demo: Number(session.balances.demo).toFixed(2), real: Number(session.balances.real).toFixed(2) });
                 }, 10000);
                 session.mainLoop = mainLoop;
+
+                // --- ESCANER PASIVO DE OPORTUNIDADES CERCANAS (siempre activo, sin operar) ---
+                const fetchCandlesPassive = (activeId) => {
+                    return new Promise((resolve) => {
+                        const timeout = setTimeout(() => resolve(null), 5000);
+                        api.getCandles(activeId, 60, 200, Date.now())
+                            .then(velas => {
+                                clearTimeout(timeout);
+                                resolve(velas && velas.length ? velas.sort((a,b) => a.from - b.from) : null);
+                            })
+                            .catch(() => { clearTimeout(timeout); resolve(null); });
+                    });
+                };
+
+                const runPassiveScanner = async () => {
+                    // Solo correr si el bot principal NO está activo para no duplicar trabajo
+                    if (session.botActivo) return;
+                    
+                    const ACTIVE_IDS = [];
+                    knownMarkets.forEach((name, id) => ACTIVE_IDS.push({ id, name }));
+                    if (ACTIVE_IDS.length === 0) return;
+
+                    // Escanear los primeros 30 activos para no sobrecargar
+                    const sample = ACTIVE_IDS.slice(0, 30);
+                    
+                    for (const { id, name } of sample) {
+                        if (session.botActivo) break; // Si se inicia el bot, parar
+                        try {
+                            await new Promise(r => setTimeout(r, 200)); // 200ms entre cada activo
+                            const velas = await fetchCandlesPassive(id);
+                            if (!velas || velas.length < 15) continue;
+
+                            const rsi = calcularRSI(velas, 6);
+                            const cci = calcularCCI(velas, 14);
+                            const limits = getAssetLimits(name);
+
+                            let near = null;
+                            if (rsi <= limits.rsiCall + 15 && cci <= limits.cciCall + 100) near = 'call';
+                            if (rsi >= limits.rsiPut  - 15 && cci >= limits.cciPut  - 100) near = 'put';
+                            
+                            if (near) {
+                                const distRsi = near === 'call' ? (limits.rsiCall - rsi).toFixed(1) : (rsi - limits.rsiPut).toFixed(1);
+                                socket.emit('near_miss', {
+                                    asset: name,
+                                    rsi: rsi.toFixed(1),
+                                    cci: cci.toFixed(1),
+                                    side: near.toUpperCase(),
+                                    reason: `[PASIVO] RSI a ${distRsi} pts del umbral`
+                                });
+                            }
+                        } catch(e) {}
+                    }
+                };
+
+                // Correr el escaner pasivo cada 60 segundos
+                session.passiveScanner = setInterval(runPassiveScanner, 60000);
+                // Y también al conectar por primera vez (delay de 5s para dar tiempo al mapa)
+                setTimeout(runPassiveScanner, 5000);
             }
         } catch (err) { socket.emit('iq_error', { msg: err.message }); }
     });
@@ -447,7 +693,19 @@ io.on('connection', (socket) => {
         const typeId = account === 'real' ? 1 : 4;
         const balanceSelect = (profile.balances || []).find(b => b.type === typeId);
         const balanceId = balanceSelect ? balanceSelect.id : profile.balance_id;
-        session.botState = { active: true, phase: 'Iniciando...', trades: 0, w: 0, l: 0, account, amount: Number(amount), cycles: Number(cycles), report: [], completedTrades: 0 };
+        session.botState = { 
+            id: Date.now(), 
+            active: true, 
+            phase: 'Iniciando...', 
+            trades: 0, 
+            w: 0, 
+            l: 0, 
+            account, 
+            amount: Number(amount), 
+            cycles: Number(cycles), 
+            report: [], 
+            completedTrades: 0 
+        };
         session.botActivo = true; session.scannedAssets = []; session.isLooping = false;
         iniciarMotorBot(socket.uid, session, balanceId, Number(amount));
     });

@@ -41,7 +41,7 @@ const App = () => {
   const [liveTrades, setLiveTrades] = useState(JSON.parse(localStorage.getItem('live_trades') || '[]'));
   
   // NUEVO: Oportunidades Cercanas, Bitácora y Calendario
-  const [nearMisses, setNearMisses] = useState([]);
+  const [nearMisses, setNearMisses] = useState(JSON.parse(localStorage.getItem('near_misses') || '[]'));
   const [dailyLogs, setDailyLogs] = useState(JSON.parse(localStorage.getItem('daily_logs') || '{}'));
   const [calendarMonth, setCalendarMonth] = useState(new Date());
   const [selectedDay, setSelectedDay] = useState(null);
@@ -153,19 +153,35 @@ const App = () => {
       });
 
       socketRef.current.on('near_miss', (data) => {
-        setNearMisses(prev => [data, ...prev].slice(0, 15));
+        setNearMisses(prev => {
+          const updated = [data, ...prev].slice(0, 20);
+          localStorage.setItem('near_misses', JSON.stringify(updated));
+          return updated;
+        });
       });
 
       socketRef.current.on('live_bot_update', (data) => {
         setBacktestPhase(data.phase);
         if (data.w !== undefined) {
           const currentConfig = backtestConfigRef.current;
-          setTestResults({ 
-            wins: data.w, 
-            losses: data.l, 
-            total: data.trades, 
-            profit: (data.w * currentConfig.amount * 0.85) - (data.l * currentConfig.amount) 
-          });
+          const w = data.w ?? 0;
+          const l = data.l ?? 0;
+          const total = data.trades ?? 0;
+          const netProfit = (w * currentConfig.amount * 0.85) - (l * currentConfig.amount);
+          setTestResults(prev => ({ 
+            // Preserve fields from previous complete result (like accountUsed, amountUsed)
+            ...(prev || {}),
+            wins: w, 
+            losses: l, 
+            trades: total,
+            total: total,
+            winRate: total > 0 ? parseFloat(((w / total) * 100).toFixed(1)) : 0,
+            profit: netProfit >= 0 ? `+ $${netProfit.toFixed(2)}` : `- $${Math.abs(netProfit).toFixed(2)}`,
+            isPositive: netProfit >= 0,
+            amountUsed: currentConfig.amount,
+            accountUsed: currentConfig.account.toUpperCase(),
+            report: data.report || [] 
+          }));
         }
       });
 
@@ -183,7 +199,8 @@ const App = () => {
             wins: data.w, 
             losses: data.l, 
             total: data.trades, 
-            profit: (data.w * data.amount * 0.85) - (data.l * data.amount) 
+            profit: (data.w * data.amount * 0.85) - (data.l * data.amount),
+            report: data.report || []
           });
         }
       });
@@ -210,14 +227,15 @@ const App = () => {
           profit: netProfit >= 0 ? `+ $${netProfit.toFixed(2)}` : `- $${Math.abs(netProfit).toFixed(2)}`,
           isPositive: netProfit >= 0,
           amountUsed: currentConfig.amount,
-          accountUsed: currentConfig.account.toUpperCase()
+          accountUsed: currentConfig.account.toUpperCase(),
+          report: data.report || []
         });
 
-        // GUARDAR CICLO COMPLETO EN BITÁCORA
+        // GUARDAR CICLO COMPLETO EN BITÁCORA CON DEDUPLICACIÓN
         const today = new Date().toLocaleDateString();
         const cycleEntry = {
-          id: Date.now(),
-          startTime: new Date().toLocaleTimeString(),
+          id: data.id || Date.now(),
+          startTime: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           account: currentConfig.account.toUpperCase(),
           amount: currentConfig.amount,
           wins: winCount,
@@ -232,18 +250,38 @@ const App = () => {
             time: t.time
           }))
         };
+
         setDailyLogs(prev => {
           const dayData = prev[today] || { cycles: [], totalWins: 0, totalLosses: 0, totalProfit: 0 };
+          const existingCycles = dayData.cycles || [];
+          
+          // Deduplicar ciclos por ID para evitar duplicaciones
+          const existsIdx = existingCycles.findIndex(c => c.id === cycleEntry.id);
+          let newCycles = [...existingCycles];
+          if (existsIdx >= 0) {
+            newCycles[existsIdx] = cycleEntry;
+          } else {
+            newCycles.push(cycleEntry);
+          }
+
+          // Recalcular totales del día
+          const totalWins = newCycles.reduce((sum, c) => sum + (c.wins || 0), 0);
+          const totalLosses = newCycles.reduce((sum, c) => sum + (c.losses || 0), 0);
+          const totalProfit = newCycles.reduce((sum, c) => sum + (c.profit || 0), 0);
+
           const updatedDay = {
-            cycles: [...(dayData.cycles || []), cycleEntry],
-            totalWins: (dayData.totalWins || 0) + winCount,
-            totalLosses: (dayData.totalLosses || 0) + lossCount,
-            totalProfit: (dayData.totalProfit || 0) + netProfit
+            cycles: newCycles,
+            totalWins,
+            totalLosses,
+            totalProfit
           };
+
           const nextState = { ...prev, [today]: updatedDay };
           localStorage.setItem('daily_logs', JSON.stringify(nextState));
           return nextState;
         });
+
+        addLog(`📊 CICLO FINALIZADO: ${winCount}G - ${lossCount}P | Net: $${netProfit.toFixed(2)}`);
       });
     } catch {
       addLog("❌ Error: Gateway inalcanzable");
@@ -253,6 +291,30 @@ const App = () => {
       if (socketRef.current) socketRef.current.disconnect();
     };
   }, [user, gatewayUrl, addLog]);
+
+  // FALLBACK LOCAL: Obtener precios de BTC/ETH/SOL directamente de Binance si el socket no los provee
+  useEffect(() => {
+    const fetchDirectPrices = async () => {
+      if (multiPrices.length > 0) return;
+      try {
+        const symbols = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT'];
+        const results = await Promise.all(symbols.map(async (sym) => {
+          const res = await fetch(`https://api.binance.com/api/v3/ticker/price?symbol=${sym}`);
+          const data = await res.json();
+          return {
+            pair: sym.replace('USDT', ''),
+            price: parseFloat(data.price).toLocaleString('en-US', { minimumFractionDigits: 2 }),
+            timestamp: new Date().toLocaleTimeString()
+          };
+        }));
+        setMultiPrices(results);
+      } catch(e) {}
+    };
+    
+    fetchDirectPrices();
+    const interval = setInterval(fetchDirectPrices, 10000);
+    return () => clearInterval(interval);
+  }, [multiPrices.length]);
 
   // 3. RECUPERACIÓN DE LOGS HISTÓRICOS
   useEffect(() => {
@@ -344,6 +406,13 @@ const App = () => {
           className="w-full bg-blue-600 text-white font-bold py-4 rounded-2xl flex items-center justify-center gap-3 hover:bg-blue-500 transition-all transform active:scale-95 shadow-lg shadow-blue-500/20"
         >
           <User className="w-5 h-5" /> Iniciar con Google Cloud
+        </button>
+        <button
+          onClick={() => setUser({ uid: 'demo_user_123', displayName: 'Robert Herrera' })}
+          id="developer-bypass-login"
+          className="w-full mt-4 bg-white/5 text-gray-400 hover:text-white font-bold py-3 rounded-2xl flex items-center justify-center gap-2 hover:bg-white/10 transition-all text-xs border border-white/5 uppercase tracking-wider"
+        >
+          Acceso Rápido Desarrollador (Bypass)
         </button>
       </div>
     </div>
@@ -652,38 +721,6 @@ const App = () => {
                     ))}
                   </div>
                 </div>
-
-                {/* Oportunidades Cercanas */}
-                <div className="bg-[#0d121f] rounded-[40px] border border-white/5 p-8 flex flex-col min-h-[400px]">
-                    <h3 className="text-2xl font-black text-white italic tracking-tighter uppercase mb-2">Oportunidades Cercanas</h3>
-                    <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mb-6">Activos que casi cumplen la estrategia</p>
-                    <div className="flex-1 overflow-y-auto space-y-3 custom-scrollbar pr-2">
-                      {nearMisses.length === 0 ? (
-                         <div className="h-full flex flex-col items-center justify-center opacity-20 py-16">
-                            <Activity className="w-12 h-12 mb-4" />
-                            <span className="text-[10px] uppercase font-black tracking-widest">Esperando escaneo...</span>
-                         </div>
-                      ) : (
-                        nearMisses.map((miss, idx) => (
-                          <div key={idx} className="bg-white/5 p-4 rounded-3xl border border-white/5 flex justify-between items-center">
-                             <div className="flex items-center gap-4">
-                                <div className={`w-1 h-8 rounded-full ${miss.side === 'CALL' ? 'bg-green-500' : 'bg-red-500'}`} />
-                                <div>
-                                   <div className="text-xs font-black text-white uppercase tracking-tight">{miss.asset}</div>
-                                   <div className="text-[9px] text-gray-500 font-bold mt-1 uppercase">RSI: {miss.rsi} | CCI: {miss.cci}</div>
-                                </div>
-                             </div>
-                             <div className="text-right">
-                                <div className={`text-[10px] font-black uppercase ${miss.side === 'CALL' ? 'text-green-500' : 'text-red-500'}`}>
-                                   {miss.side === 'CALL' ? 'POSIBLE COMPRA' : 'POSIBLE VENTA'}
-                                </div>
-                                <div className="text-[8px] text-gray-600 font-black mt-1 uppercase">{miss.reason}</div>
-                             </div>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                </div>
               </div>
             </div>
           )}
@@ -696,6 +733,7 @@ const App = () => {
                </div>
 
                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                 <div className="space-y-8">
                  {/* Tarjeta de Estrategia */}
                  <div className="bg-[#0d121f] rounded-[40px] border border-blue-500/20 p-8 shadow-[0_0_30px_rgba(0,100,255,0.1)] relative overflow-hidden group">
                     <div className="absolute top-0 right-0 p-8 opacity-20 group-hover:opacity-40 transition-opacity">
@@ -783,109 +821,234 @@ const App = () => {
                         {isTesting ? 'EJECUTANDO ANÁLISIS...' : 'INICIAR CAZA DE MERCADOS'}
                       </button>
                     </div>
-                 </div>
+                  </div>
 
-                 {/* Panel de Resultados */}
-                 <div className="bg-[#0d121f] rounded-[40px] border border-white/5 p-8 flex flex-col justify-center">
-                    {!testResults && !isTesting && (
-                      <div className="text-center text-gray-600 font-bold tracking-widest flex flex-col items-center">
-                        <Activity className="w-16 h-16 mb-6 opacity-20" />
-                        <span className="uppercase text-sm">Motor Preparado.</span>
-                        <span className="text-[10px] mt-2 max-w-[200px] leading-relaxed opacity-60">Configura los parámetros y comienza el ciclo de prueba de 10 operaciones.</span>
+                  {/* Oportunidades Cercanas */}
+                  <div className="bg-[#0d121f] rounded-[40px] border border-white/5 p-8 flex flex-col min-h-[400px]">
+                      <div className="flex items-center justify-between mb-2">
+                        <h3 className="text-2xl font-black text-white italic tracking-tighter uppercase">Oportunidades Cercanas</h3>
+                        {nearMisses.length > 0 && (
+                          <div className="flex items-center gap-3">
+                            <span className="bg-blue-500/20 text-blue-400 text-[9px] font-black px-3 py-1 rounded-full border border-blue-500/30 uppercase tracking-widest">
+                              {nearMisses.length} señales
+                            </span>
+                            <button 
+                              onClick={() => { setNearMisses([]); localStorage.removeItem('near_misses'); }}
+                              className="text-[9px] font-black text-red-500 hover:text-red-400 border border-red-500/30 px-3 py-1.5 rounded-xl uppercase tracking-widest transition-all"
+                            >Limpiar</button>
+                          </div>
+                        )}
                       </div>
-                    )}
-
-                    {isTesting && (
-                      <div className="flex flex-col h-full max-h-[600px]">
-                        <div className="text-center mb-6">
-                           <div className="inline-flex items-center gap-2 bg-blue-500/10 text-blue-400 px-4 py-2 rounded-full border border-blue-500/20 text-[10px] font-black uppercase tracking-widest mb-4">
-                              <Cpu className="w-3 h-3 animate-spin" /> MODO HUNTER EN LINEA
+                      <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mb-6">Activos que casi cumplen la estrategia RSI+CCI</p>
+                      <div className="flex-1 overflow-y-auto space-y-3 custom-scrollbar pr-2 font-sans">
+                        {nearMisses.length === 0 ? (
+                           <div className="h-full flex flex-col items-center justify-center opacity-20 py-16">
+                              <Activity className="w-12 h-12 mb-4 animate-pulse" />
+                              <span className="text-[10px] uppercase font-black tracking-widest">Esperando escaneo activo...</span>
                            </div>
-                           <h3 className="text-2xl font-black text-white italic">RADAR ESTRATÉGICO</h3>
-                        </div>
+                        ) : (
+                          nearMisses.map((miss, idx) => (
+                            <div key={idx} className={`p-4 rounded-3xl border flex justify-between items-center transition-all ${
+                              miss.side === 'CALL' 
+                                ? 'bg-green-500/5 border-green-500/20 hover:border-green-500/40' 
+                                : 'bg-red-500/5 border-red-500/20 hover:border-red-500/40'
+                            }`}>
+                               <div className="flex items-center gap-4">
+                                  <div className={`w-1.5 h-10 rounded-full shadow-lg ${miss.side === 'CALL' ? 'bg-green-500 shadow-green-500/30' : 'bg-red-500 shadow-red-500/30'}`} />
+                                  <div>
+                                     <div className="text-xs font-black text-white uppercase tracking-tight">{miss.asset}</div>
+                                     <div className="text-[9px] text-gray-500 font-bold mt-1 uppercase">RSI: {miss.rsi} | CCI: {miss.cci}</div>
+                                     <div className="text-[8px] text-gray-600 font-bold mt-0.5">{miss.reason}</div>
+                                  </div>
+                               </div>
+                               <div className="text-right">
+                                  <div className={`text-[11px] font-black uppercase px-3 py-1 rounded-lg ${miss.side === 'CALL' ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'}`}>
+                                     {miss.side === 'CALL' ? '↑ POSIBLE COMPRA' : '↓ POSIBLE VENTA'}
+                                  </div>
+                               </div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                  </div>
+                </div>
 
-                        <div className="flex-1 overflow-y-auto space-y-3 pr-2 custom-scrollbar">
-                           {scanTelemetry.length === 0 ? (
-                             <div className="text-center py-20 text-gray-600 font-bold uppercase text-xs animate-pulse">Iniciando scanner...</div>
-                           ) : (
-                             scanTelemetry.map((item, idx) => {
-                               // Porcentaje hacia sobrecompra (RSI > 50) o sobreventa (RSI < 50)
-                               const total = item.progress || 0;
-                               const isReady = Number(total) >= 95;
-                               const rsiVal = Number(item.rsi);
-                               const cciVal = Number(item.cci);
-                               const isScanning = item.rsi === '--'; 
-                               const direction = rsiVal >= 90 ? 'VENTA 🔴' : rsiVal <= 10 ? 'COMPRA 🟢' : '';
+                 {/* Panel de Resultados / Radar / Entradas en Curso */}
+                  <div className="space-y-8">
+                     {!testResults && !isTesting && (
+                       <div className="bg-[#0d121f] rounded-[40px] border border-white/5 p-8 flex flex-col justify-center min-h-[400px]">
+                         <div className="text-center text-gray-600 font-bold tracking-widest flex flex-col items-center">
+                           <Activity className="w-16 h-16 mb-6 opacity-20" />
+                           <span className="uppercase text-sm">Motor Preparado.</span>
+                           <span className="text-[10px] mt-2 max-w-[200px] leading-relaxed opacity-60">Configura los parámetros y comienza el ciclo de prueba de 10 operaciones.</span>
+                         </div>
+                       </div>
+                     )}
 
-                               return (
-                                 <div key={idx} className={`bg-[#080b13] p-4 rounded-2xl border transition-all ${isReady ? 'border-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.3)] scale-[1.02]' : 'border-white/5'}`}>
-                                    <div className="flex justify-between items-center mb-2">
-                                       <span className="text-xs font-black text-white tracking-tighter truncate w-36">{item.asset}</span>
-                                       <span className={`text-[10px] font-black ${isReady ? 'text-blue-500 animate-pulse' : isScanning ? 'text-gray-700' : 'text-gray-500'}`}>
-                                         {isScanning ? '⏳ ESPERANDO' : direction || `${total}%`}
-                                       </span>
+                     {isTesting && (
+                       <>
+                         {/* CARD 1: RADAR ESTRATÉGICO */}
+                         <div className="bg-[#0d121f] rounded-[40px] border border-white/5 p-8 flex flex-col min-h-[300px]">
+                           <div className="text-center mb-6">
+                              <div className="inline-flex items-center gap-2 bg-blue-500/10 text-blue-400 px-4 py-2 rounded-full border border-blue-500/20 text-[10px] font-black uppercase tracking-widest mb-4">
+                                 <Cpu className="w-3 h-3 animate-spin" /> MODO HUNTER EN LINEA
+                              </div>
+                              <h3 className="text-2xl font-black text-white italic">RADAR ESTRATÉGICO</h3>
+                           </div>
+
+                           <div className="flex-1 overflow-y-auto space-y-3 pr-2 custom-scrollbar max-h-[300px]">
+                              {scanTelemetry.length === 0 ? (
+                                <div className="text-center py-20 text-gray-600 font-bold uppercase text-xs animate-pulse">Iniciando scanner...</div>
+                              ) : (
+                                scanTelemetry.map((item, idx) => {
+                                  const total = item.progress || 0;
+                                  const isReady = Number(total) >= 95;
+                                  const rsiVal = Number(item.rsi);
+                                  const cciVal = Number(item.cci);
+                                  const isScanning = item.rsi === '--'; 
+                                  const direction = rsiVal >= 90 ? 'VENTA 🔴' : rsiVal <= 10 ? 'COMPRA 🟢' : '';
+
+                                  return (
+                                    <div key={idx} className={`bg-[#080b13] p-4 rounded-2xl border transition-all ${isReady ? 'border-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.3)] scale-[1.02]' : 'border-white/5'}`}>
+                                       <div className="flex justify-between items-center mb-2">
+                                          <span className="text-xs font-black text-white tracking-tighter truncate w-36">{item.asset}</span>
+                                          <span className={`text-[10px] font-black ${isReady ? 'text-blue-500 animate-pulse' : isScanning ? 'text-gray-700' : 'text-gray-500'}`}>
+                                            {isScanning ? '⏳ ESPERANDO' : direction || `${total}%`}
+                                          </span>
+                                       </div>
+                                       <div className="w-full bg-white/5 h-1.5 rounded-full overflow-hidden">
+                                          <div
+                                            className={`h-full transition-all duration-700 ${isReady ? 'bg-blue-500 animate-pulse' : isScanning ? 'bg-white/10' : 'bg-gradient-to-r from-blue-900 to-blue-600'}`}
+                                            style={{ width: isScanning ? '5%' : `${total}%` }}
+                                          />
+                                       </div>
+                                       <div className="flex justify-between mt-2">
+                                          <span className="text-[8px] font-bold text-gray-600 uppercase">RSI: {item.rsi}</span>
+                                          <span className="text-[8px] font-bold text-gray-600 uppercase">CCI: {item.cci}</span>
+                                       </div>
                                     </div>
-                                    <div className="w-full bg-white/5 h-1.5 rounded-full overflow-hidden">
-                                       <div
-                                         className={`h-full transition-all duration-700 ${isReady ? 'bg-blue-500 animate-pulse' : isScanning ? 'bg-white/10' : 'bg-gradient-to-r from-blue-900 to-blue-600'}`}
-                                         style={{ width: isScanning ? '5%' : `${total}%` }}
-                                       />
-                                    </div>
-                                    <div className="flex justify-between mt-2">
-                                       <span className="text-[8px] font-bold text-gray-600 uppercase">RSI: {item.rsi}</span>
-                                       <span className="text-[8px] font-bold text-gray-600 uppercase">CCI: {item.cci}</span>
-                                    </div>
+                                  );
+                                })
+                              )}
+                           </div>
+
+                           <div className="mt-6 pt-6 border-t border-white/5">
+                              <div className="bg-blue-600/10 border border-blue-500/20 p-4 rounded-2xl text-center">
+                                 <p className="text-[10px] font-bold text-blue-400 uppercase mb-1">FASE ACTUAL</p>
+                                 <p className="text-xs text-blue-200 font-medium">{backtestPhase}</p>
+                              </div>
+                           </div>
+                         </div>
+
+                         {/* CARD 2: OPERACIONES EN CURSO */}
+                         <div className="bg-[#0d121f] rounded-[40px] border border-white/5 p-8 flex flex-col min-h-[300px]">
+                           <div className="text-center mb-6">
+                              <h3 className="text-2xl font-black text-white italic uppercase">Operaciones en Curso</h3>
+                              <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mt-1">Detalle de entradas del ciclo activo</p>
+                           </div>
+
+                           <div className="flex-1 overflow-y-auto space-y-3 pr-2 custom-scrollbar max-h-[300px] font-sans">
+                              {!testResults?.report || testResults.report.length === 0 ? (
+                                <div className="h-full flex flex-col items-center justify-center opacity-20 py-16">
+                                   <Activity className="w-12 h-12 mb-4 animate-pulse text-blue-500" />
+                                   <span className="text-[10px] uppercase font-black tracking-widest text-gray-500">Esperando entradas del bot...</span>
+                                </div>
+                              ) : (
+                                testResults.report.map((t, idx) => (
+                                  <div key={idx} className="bg-white/5 p-4 rounded-3xl border border-white/5 flex justify-between items-center animate-in slide-in-from-bottom-2">
+                                     <div className="flex items-center gap-4">
+                                        <div className={`w-1.5 h-8 rounded-full ${t.side === 'CALL' ? 'bg-green-500' : 'bg-red-500'}`} />
+                                        <div>
+                                           <div className="text-xs font-black text-white uppercase tracking-tight flex items-center gap-2">
+                                             {t.asset}
+                                             <span className={`text-[9px] px-2 py-0.5 rounded-full font-black ${t.side === 'CALL' ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'}`}>
+                                               {t.side}
+                                             </span>
+                                           </div>
+                                           <div className="text-[9px] text-gray-500 font-bold mt-1 uppercase">Entrada: {t.entry} | RSI: {t.rsi} | CCI: {t.cci}</div>
+                                        </div>
+                                     </div>
+                                     <div className="text-right">
+                                        <span className={`text-xs font-black ${t.color || (t.result?.includes('GANADA') ? 'text-green-400' : t.result?.includes('PERDIDA') ? 'text-red-400' : 'text-yellow-400 animate-pulse')}`}>
+                                           {t.result}
+                                        </span>
+                                        <div className="text-[8px] text-gray-600 font-black mt-1 uppercase">{t.time}</div>
+                                     </div>
+                                  </div>
+                                ))
+                              )}
+                           </div>
+                         </div>
+                       </>
+                     )}
+
+                     {testResults && !isTesting && (testResults.accountUsed || testResults.wins !== undefined) && (
+                       <div className="bg-[#0d121f] rounded-[40px] border border-white/5 p-8 flex flex-col">
+                         <div className="space-y-8 animate-in slide-in-from-bottom-5">
+                            <div className="text-center border-b border-white/5 pb-6">
+                               <h3 className="text-[10px] tracking-[0.3em] font-black text-gray-500 uppercase mb-2">Resultados del Ciclo</h3>
+                               <div className="text-white text-2xl font-black italic tracking-tighter">PERFIL: CUENTA {testResults.accountUsed || backtestConfig.account.toUpperCase()}</div>
+                               <div className="text-blue-500 font-bold text-sm mt-1">Inversión por entrada: ${(testResults.amountUsed ?? backtestConfig.amount).toFixed(2)}</div>
+                            </div>
+                            
+                            <div className="grid grid-cols-2 gap-4">
+                              <div className="bg-[#080b13] p-6 rounded-3xl border border-white/5 text-center shadow-inner">
+                                 <div className="text-[10px] text-gray-500 uppercase tracking-widest font-bold mb-2">Tasa de Acierto</div>
+                                 <div className={`text-4xl font-black drop-shadow-md ${
+                                   (testResults.winRate ?? (testResults.total > 0 ? (testResults.wins / testResults.total * 100) : 0)) >= 50 
+                                   ? 'text-green-400' : 'text-red-400'
+                                 }`}>
+                                   {testResults.winRate ?? (testResults.total > 0 ? ((testResults.wins / testResults.total) * 100).toFixed(1) : '0.0')}%
                                  </div>
-                               );
-                             })
-                           )}
-                        </div>
-
-                        <div className="mt-6 pt-6 border-t border-white/5">
-                           <div className="bg-blue-600/10 border border-blue-500/20 p-4 rounded-2xl text-center">
-                              <p className="text-[10px] font-bold text-blue-400 uppercase mb-1">FASE ACTUAL</p>
-                              <p className="text-xs text-blue-200 font-medium">{backtestPhase}</p>
-                           </div>
-                        </div>
-                      </div>
-                    )}
-
-                    {testResults && !isTesting && (
-                      <div className="space-y-8 animate-in slide-in-from-bottom-5">
-                         <div className="text-center border-b border-white/5 pb-6">
-                            <h3 className="text-[10px] tracking-[0.3em] font-black text-gray-500 uppercase mb-2">Resultados del Ciclo (10 Entradas)</h3>
-                            <div className="text-white text-2xl font-black italic tracking-tighter">PERFIL: CUENTA {testResults.accountUsed}</div>
-                            <div className="text-blue-500 font-bold text-sm mt-1">Inversión por entrada: ${testResults.amountUsed.toFixed(2)}</div>
-                         </div>
-                         
-                         <div className="grid grid-cols-2 gap-4">
-                           <div className="bg-[#080b13] p-6 rounded-3xl border border-white/5 text-center shadow-inner">
-                              <div className="text-[10px] text-gray-500 uppercase tracking-widest font-bold mb-2">Tasa de Acierto</div>
-                              <div className={`text-4xl font-black drop-shadow-md ${testResults.winRate >= 50 ? 'text-green-400' : 'text-red-400'}`}>
-                                {testResults.winRate}%
                               </div>
-                           </div>
-                           <div className="bg-[#080b13] p-6 rounded-3xl border border-white/5 text-center shadow-inner">
-                              <div className="text-[10px] text-gray-500 uppercase tracking-widest font-bold mb-2">Neto (Beneficio)</div>
-                              <div className={`text-3xl font-black mt-1 ${testResults.isPositive ? 'text-green-500' : 'text-red-500'}`}>
-                                {testResults.profit}
-                              </div>
-                           </div>
-                         </div>
-
-                         <div className="bg-[#080b13] p-6 rounded-3xl border border-white/5">
-                            <div className="text-[10px] text-gray-500 uppercase tracking-widest font-bold mb-4 text-center">Desglose de Efectividad</div>
-                            <div className="flex justify-between items-center bg-white/5 px-6 py-4 rounded-2xl font-mono text-sm shadow-inner">
-                              <span className="text-gray-400">Total Operaciones: <b className="text-white">{testResults.trades}</b></span>
-                              <div className="flex gap-4">
-                                <span className="text-green-400 font-black flex items-center gap-1"><CheckCircle2 className="w-4 h-4"/> G: {testResults.wins}</span>
-                                <span className="text-red-400 font-black flex items-center gap-1"><AlertCircle className="w-4 h-4"/> P: {testResults.losses}</span>
+                              <div className="bg-[#080b13] p-6 rounded-3xl border border-white/5 text-center shadow-inner">
+                                 <div className="text-[10px] text-gray-500 uppercase tracking-widest font-bold mb-2">Neto (Beneficio)</div>
+                                 <div className={`text-3xl font-black mt-1 ${
+                                   testResults.isPositive !== undefined 
+                                     ? (testResults.isPositive ? 'text-green-500' : 'text-red-500')
+                                     : (typeof testResults.profit === 'number' ? (testResults.profit >= 0 ? 'text-green-500' : 'text-red-500') : 'text-gray-400')
+                                 }`}>
+                                   {typeof testResults.profit === 'string' ? testResults.profit : (typeof testResults.profit === 'number' ? (testResults.profit >= 0 ? `+ $${testResults.profit.toFixed(2)}` : `- $${Math.abs(testResults.profit).toFixed(2)}`) : '--')}
+                                 </div>
                               </div>
                             </div>
+
+                            <div className="bg-[#080b13] p-6 rounded-3xl border border-white/5">
+                               <div className="text-[10px] text-gray-500 uppercase tracking-widest font-bold mb-4 text-center">Desglose de Efectividad</div>
+                               <div className="flex justify-between items-center bg-white/5 px-6 py-4 rounded-2xl font-mono text-sm shadow-inner mb-4">
+                                 <span className="text-gray-400">Total Operaciones: <b className="text-white">{testResults.trades ?? testResults.total ?? 0}</b></span>
+                                 <div className="flex gap-4">
+                                   <span className="text-green-400 font-black flex items-center gap-1"><CheckCircle2 className="w-4 h-4"/> G: {testResults.wins ?? 0}</span>
+                                   <span className="text-red-400 font-black flex items-center gap-1"><AlertCircle className="w-4 h-4"/> P: {testResults.losses ?? 0}</span>
+                                 </div>
+                               </div>
+
+                               <div className="text-[10px] text-gray-500 uppercase tracking-widest font-bold mb-3 text-center">Operaciones del Ciclo</div>
+                               <div className="space-y-2 max-h-[250px] overflow-y-auto pr-2 custom-scrollbar font-sans">
+                                 {testResults.report && testResults.report.length > 0 ? (
+                                   testResults.report.map((t, idx) => (
+                                     <div key={idx} className="bg-white/5 p-3 rounded-2xl border border-white/5 flex justify-between items-center">
+                                        <div className="flex items-center gap-3">
+                                           <div className={`w-1 h-6 rounded-full ${t.side === 'CALL' ? 'bg-green-500' : 'bg-red-500'}`} />
+                                           <div>
+                                              <div className="text-[10px] font-black text-white uppercase">{t.asset}</div>
+                                              <div className="text-[8px] text-gray-500 font-bold">Entrada: {t.entry} | {t.time}</div>
+                                           </div>
+                                        </div>
+                                        <span className={`text-[10px] font-black ${t.color || (t.result?.includes('GANADA') ? 'text-green-400' : 'text-red-400')}`}>
+                                           {t.result}
+                                        </span>
+                                     </div>
+                                   ))
+                                 ) : (
+                                   <div className="text-[9px] text-gray-600 font-bold uppercase text-center py-2">Sin operaciones registradas</div>
+                                 )}
+                               </div>
+                            </div>
                          </div>
-                      </div>
-                    )}
-                 </div>
+                       </div>
+                     )}
+                  </div>
                </div>
 
 
