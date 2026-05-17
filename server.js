@@ -245,10 +245,16 @@ function iniciarMotorBot(uid, session, balanceId, amount) {
                             
                             setTimeout(async () => {
                                 try {
-                                    let vC = await api.getCandles(id, 60, 4, Date.now());
-                                    vC = vC.sort((a,b)=>a.from-b.from);
-                                    // Evaluar usando el precio de cierre de la vela vs precio de entrada exacto
-                                    const win = dir === 'call' ? vC[vC.length-2].close > entryPrice : vC[vC.length-2].close < entryPrice;
+                                    let vC = await fetchCandlesSafe(id, 60, 5);
+                                    let closePrice = entryPrice; // Default a empate
+                                    
+                                    if (vC && vC.length > 0) {
+                                        vC = vC.sort((a,b)=>a.from-b.from);
+                                        // Obtener el cierre de la vela anterior a la actual (la vela que expiró)
+                                        closePrice = vC.length > 1 ? vC[vC.length-2].close : vC[vC.length-1].close;
+                                    }
+
+                                    const win = dir === 'call' ? closePrice > entryPrice : closePrice < entryPrice;
                                     
                                     if (win) {
                                         s.w++;
@@ -271,7 +277,12 @@ function iniciarMotorBot(uid, session, balanceId, amount) {
                                         io.to(uid).emit('balance_sync', { demo: Number(uD).toFixed(2), real: Number(uR).toFixed(2) });
                                     }).catch(()=>{});
 
-                                } catch(e) { ts.result='FINALIZADA'; io.to(uid).emit('live_trade_result', ts); }
+                                } catch(e) { 
+                                    // Si falla la red, marcamos pérdida por seguridad
+                                    s.l++;
+                                    ts.result='PERDIDA ❌'; 
+                                    io.to(uid).emit('live_trade_result', ts); 
+                                }
                                 
                                 s.completedTrades++;
                                 if (s.completedTrades >= s.cycles) {

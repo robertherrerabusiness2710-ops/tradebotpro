@@ -38,11 +38,11 @@ const App = () => {
   const [multiPrices, setMultiPrices] = useState([]);
   const [historyFilter, setHistoryFilter] = useState('all');
   const [cycleReport, setCycleReport] = useState(null);
-  const [liveTrades, setLiveTrades] = useState([]);
+  const [liveTrades, setLiveTrades] = useState(JSON.parse(localStorage.getItem('live_trades') || '[]'));
   
   // NUEVO: Oportunidades Cercanas y Bitácora
   const [nearMisses, setNearMisses] = useState([]);
-  const [dailyLogs, setDailyLogs] = useState({});
+  const [dailyLogs, setDailyLogs] = useState(JSON.parse(localStorage.getItem('daily_logs') || '{}'));
   const socketRef = useRef(null);
   const iqEmailRef = useRef(null);
   const iqPassRef = useRef(null);
@@ -138,20 +138,30 @@ const App = () => {
       socketRef.current.on('live_trade_result', (data) => {
         // Agregar hora actual al resultado
         const withTime = { ...data, displayTime: new Date().toLocaleTimeString(), date: new Date().toLocaleDateString() };
-        setLiveTrades(prev => [withTime, ...prev].slice(0, 10));
-        addLog(`${data.winner ? '✅ GANADA' : '❌ PERDIDA'}: ${data.asset}`);
+        
+        setLiveTrades(prev => {
+            const updated = [withTime, ...prev].slice(0, 10);
+            localStorage.setItem('live_trades', JSON.stringify(updated));
+            return updated;
+        });
+
+        const isWin = data.result && data.result.includes('GANADA');
+        addLog(`${isWin ? '✅ GANADA' : '❌ PERDIDA'}: ${data.asset}`);
         
         // Update bitacora
         setDailyLogs(prev => {
           const date = withTime.date;
           const current = prev[date] || { wins: 0, losses: 0, profit: 0 };
-          return {
+          const isWin = data.result && data.result.includes('GANADA');
+          const nextState = {
             ...prev,
             [date]: {
-              wins: current.wins + (data.winner ? 1 : 0),
-              losses: current.losses + (data.winner ? 0 : 1),
+              wins: current.wins + (isWin ? 1 : 0),
+              losses: current.losses + (isWin ? 0 : 1),
             }
           };
+          localStorage.setItem('daily_logs', JSON.stringify(nextState));
+          return nextState;
         });
       });
 
