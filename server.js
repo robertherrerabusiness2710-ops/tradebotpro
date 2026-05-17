@@ -215,22 +215,30 @@ function iniciarMotorBot(uid, session, balanceId, amount) {
             return;
         }
 
-        const ACTIVOS = [];
-        knownMarkets.forEach((name, id) => ACTIVOS.push(id));
-        // Fallback amplio con IDs conocidos de IQ Option si aún no se cargó el mapa
-        if (ACTIVOS.length === 0) {
-            // Crypto OTC + Indices OTC + Acciones OTC + Forex OTC populares
-            [816, 817, 818, 819, 820, 821, 822, 823, 824, 825, 
-             1072, 1073, 1074, 1075, 1076, 1077, 1078, 1079, 1080,
-             994, 993, 992, 991, 990, 989, 988, 987, 986, 985,
-             1000, 1001, 1002, 1003, 1004, 1005, 1006, 1007, 1008,
-             76, 77, 78, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90,
-             3, 4, 5, 6, 7, 8, 9, 10, 36, 37, 38, 39
-            ].forEach(id => ACTIVOS.push(id));
+        let ACTIVOS = [];
+        let isFocused = false;
+        
+        if (session.focusAssets && session.focusAssets.length > 0) {
+            ACTIVOS = session.focusAssets;
+            isFocused = true;
+            s.phase = `🎯 Modo Cazador: Enfocado en ${ACTIVOS.length} activos prometedores...`;
+            io.to(uid).emit('live_bot_update', { phase: s.phase, trades: s.trades, w: s.w, l: s.l, report: s.report });
+        } else {
+            knownMarkets.forEach((name, id) => ACTIVOS.push(id));
+            if (ACTIVOS.length === 0) {
+                // Crypto OTC + Indices OTC + Acciones OTC + Forex OTC populares
+                [816, 817, 818, 819, 820, 821, 822, 823, 824, 825, 
+                 1072, 1073, 1074, 1075, 1076, 1077, 1078, 1079, 1080,
+                 994, 993, 992, 991, 990, 989, 988, 987, 986, 985,
+                 1000, 1001, 1002, 1003, 1004, 1005, 1006, 1007, 1008,
+                 76, 77, 78, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90,
+                 3, 4, 5, 6, 7, 8, 9, 10, 36, 37, 38, 39
+                ].forEach(id => ACTIVOS.push(id));
+            }
         }
 
-        // Inyectar placeholders si está vacío
-        if (session.scannedAssets.length === 0) {
+        // Inyectar placeholders si está vacío (solo en escaneo global)
+        if (!isFocused && session.scannedAssets.length === 0) {
             ACTIVOS.forEach(id => {
                 const name = knownMarkets.get(id) || `ID:${id}`;
                 updateScannedAssets(uid, session, name, '--', '--', 0);
@@ -239,13 +247,16 @@ function iniciarMotorBot(uid, session, balanceId, amount) {
         }
 
         const BATCH_SIZE = 30;
+        let foundNearMissesInThisLoop = [];
         
         for (let i = 0; i < ACTIVOS.length; i += BATCH_SIZE) {
             if (!session.botActivo || s.trades >= s.cycles) break;
             
             const batch = ACTIVOS.slice(i, i + BATCH_SIZE);
-            s.phase = `🔍 Analizando Lote [${i+1} a ${Math.min(i+BATCH_SIZE, ACTIVOS.length)} de ${ACTIVOS.length}]...`;
-            io.to(uid).emit('live_bot_update', { phase: s.phase, trades: s.trades, w: s.w, l: s.l, report: s.report });
+            if (!isFocused) {
+                s.phase = `🔍 Analizando Lote [${i+1} a ${Math.min(i+BATCH_SIZE, ACTIVOS.length)} de ${ACTIVOS.length}]...`;
+                io.to(uid).emit('live_bot_update', { phase: s.phase, trades: s.trades, w: s.w, l: s.l, report: s.report });
+            }
 
             await Promise.all(batch.map(async (id, index) => {
                 if (!session.botActivo || s.trades >= s.cycles) return;
@@ -292,6 +303,7 @@ function iniciarMotorBot(uid, session, balanceId, amount) {
                         // PUT: RSI por encima del umbral-15 Y CCI por encima del umbral-100
                         if (rsi >= limits.rsiPut  - 15 && cci >= limits.cciPut  - 100) near = 'put';
                         if (near) {
+                            foundNearMissesInThisLoop.push(id);
                             const distRsi = near === 'call' ? (limits.rsiCall - rsi).toFixed(1) : (rsi - limits.rsiPut).toFixed(1);
                             io.to(uid).emit('near_miss', {
                                 asset: name, rsi: rsi.toFixed(1), cci: cci.toFixed(1), side: near.toUpperCase(),
@@ -464,9 +476,14 @@ function iniciarMotorBot(uid, session, balanceId, amount) {
             await new Promise(r => setTimeout(r, 200)); // Breve pausa entre lotes para que el websocket respire
         }
         if (session.botActivo && s.trades < s.cycles) {
-            s.phase = `⏳ Recargando en 8s... (${s.trades}/${s.cycles})`;
+            session.focusAssets = foundNearMissesInThisLoop.length > 0 ? [...new Set(foundNearMissesInThisLoop)] : [];
+            
+            s.phase = session.focusAssets.length > 0 
+                ? `⚡ Modo Cazador activado: Recargando en 2s...` 
+                : `⏳ Recargando escáner global en 6s...`;
+                
             io.to(uid).emit('live_bot_update', { phase: s.phase, trades: s.trades, w: s.w, l: s.l, report: s.report });
-            session.botTimeout = setTimeout(loop, 8000);
+            session.botTimeout = setTimeout(loop, session.focusAssets.length > 0 ? 2000 : 6000);
         } else { session.isLooping = false; }
     };
     loop();
