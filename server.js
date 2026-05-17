@@ -224,11 +224,24 @@ function iniciarMotorBot(uid, session, balanceId, amount) {
         let isFocused = false;
         
         if (session.focusAssets && session.focusAssets.length > 0) {
-            ACTIVOS = session.focusAssets;
-            isFocused = true;
-            s.phase = `🎯 Modo Cazador: Enfocado en ${ACTIVOS.length} activos prometedores...`;
-            io.to(uid).emit('live_bot_update', { phase: s.phase, trades: s.trades, w: s.w, l: s.l, report: s.report });
+            session.hunterLoops = (session.hunterLoops || 0) + 1;
+            
+            // Expiración del Modo Cazador: Si lleva ~2 minutos (45 loops) atascado en los mismos activos,
+            // forzamos un reseteo para que dé una vuelta global y no se pierda nuevas oportunidades.
+            if (session.hunterLoops > 45) {
+                session.focusAssets = [];
+                session.hunterLoops = 0;
+            } else {
+                ACTIVOS = session.focusAssets;
+                isFocused = true;
+                s.phase = `🎯 Modo Cazador: Enfocado en ${ACTIVOS.length} activos... (Caduca en ${46 - session.hunterLoops})`;
+                io.to(uid).emit('live_bot_update', { phase: s.phase, trades: s.trades, w: s.w, l: s.l, report: s.report });
+            }
         } else {
+            session.hunterLoops = 0; // Reiniciar contador si no hay foco
+        }
+        
+        if (!isFocused) {
             knownMarkets.forEach((name, id) => ACTIVOS.push(id));
             if (ACTIVOS.length === 0) {
                 // Crypto OTC + Indices OTC + Acciones OTC + Forex OTC populares
