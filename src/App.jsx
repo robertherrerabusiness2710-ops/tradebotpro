@@ -7,7 +7,7 @@ import {
 import { io } from 'socket.io-client';
 import { auth, db } from './lib/firebase';
 import { onAuthStateChanged, signOut, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
-import { collection, addDoc, onSnapshot, query, orderBy, limit, serverTimestamp } from 'firebase/firestore';
+import { collection, addDoc, onSnapshot, query, orderBy, limit, serverTimestamp, doc, setDoc, getDoc } from 'firebase/firestore';
 
 // ==========================================
 // CONFIGURACIÓN DE NÚCLEO (BLINDAJE v6.2)
@@ -56,7 +56,24 @@ const App = () => {
 
   // 1. GESTIÓN DE AUTENTICACIÓN FIREBASE
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (u) => setUser(u));
+    const unsub = onAuthStateChanged(auth, async (u) => {
+      setUser(u);
+      if (u) {
+        try {
+          const docRef = doc(db, 'user_data', u.uid);
+          const docSnap = await getDoc(docRef);
+          if (docSnap.exists() && docSnap.data().dailyLogs) {
+            setDailyLogs(prev => {
+              const merged = { ...prev, ...docSnap.data().dailyLogs };
+              localStorage.setItem('daily_logs', JSON.stringify(merged));
+              return merged;
+            });
+          }
+        } catch (e) {
+          console.error("Error sincronizando bitácora desde la nube:", e);
+        }
+      }
+    });
     return () => unsub();
   }, []);
 
@@ -278,6 +295,12 @@ const App = () => {
 
           const nextState = { ...prev, [today]: updatedDay };
           localStorage.setItem('daily_logs', JSON.stringify(nextState));
+          
+          if (user) {
+            setDoc(doc(db, 'user_data', user.uid), { dailyLogs: nextState }, { merge: true })
+              .catch(err => console.error("Error subiendo bitácora a la nube:", err));
+          }
+          
           return nextState;
         });
 
@@ -528,7 +551,14 @@ const App = () => {
                         <div className="flex items-center gap-2">
                           <button onClick={() => setCalendarMonth(prev => new Date(prev.getFullYear(), prev.getMonth()-1))} className="w-8 h-8 rounded-xl bg-white/5 hover:bg-white/10 text-white font-black flex items-center justify-center transition-all">‹</button>
                           <button onClick={() => setCalendarMonth(prev => new Date(prev.getFullYear(), prev.getMonth()+1))} className="w-8 h-8 rounded-xl bg-white/5 hover:bg-white/10 text-white font-black flex items-center justify-center transition-all">›</button>
-                          <button onClick={() => { setDailyLogs({}); localStorage.removeItem('daily_logs'); setSelectedDay(null); }} className="text-[9px] font-black text-red-500 hover:text-red-400 border border-red-500/30 px-3 py-1.5 rounded-xl uppercase tracking-widest transition-all ml-2">Limpiar</button>
+                          <button onClick={() => { 
+                            setDailyLogs({}); 
+                            localStorage.removeItem('daily_logs'); 
+                            setSelectedDay(null); 
+                            if (user) {
+                              setDoc(doc(db, 'user_data', user.uid), { dailyLogs: {} }, { merge: true });
+                            }
+                          }} className="text-[9px] font-black text-red-500 hover:text-red-400 border border-red-500/30 px-3 py-1.5 rounded-xl uppercase tracking-widest transition-all ml-2">Limpiar</button>
                         </div>
                       </div>
 
@@ -606,6 +636,11 @@ const App = () => {
                                         const totalProfit = newCycles.reduce((s,c) => s+(c.profit||0), 0);
                                         const updated = { ...prev, [selectedDay]: { cycles: newCycles, totalWins, totalLosses, totalProfit } };
                                         localStorage.setItem('daily_logs', JSON.stringify(updated));
+                                        
+                                        if (user) {
+                                          setDoc(doc(db, 'user_data', user.uid), { dailyLogs: updated }, { merge: true });
+                                        }
+                                        
                                         return updated;
                                       });
                                     }}
