@@ -147,7 +147,11 @@ const saveTimeMemory = () => {
 };
 
 const recordTradeTime = (isWin) => {
-    const hour = new Date().getHours().toString();
+    // Obtener la hora en la zona horaria del usuario (America/Caracas = -04:00)
+    const options = { timeZone: 'America/Caracas', hour: 'numeric', hour12: false };
+    const formatter = new Intl.DateTimeFormat('en-US', options);
+    const hour = parseInt(formatter.format(new Date()), 10).toString();
+    
     if (!timeMemory[hour]) timeMemory[hour] = { wins: 0, losses: 0 };
     if (isWin) timeMemory[hour].wins++;
     else timeMemory[hour].losses++;
@@ -367,7 +371,7 @@ function iniciarMotorBot(uid, session, balanceId, amount) {
                             entry: currP, 
                             rsi: rsi.toFixed(1), 
                             cci: cci.toFixed(1), 
-                            time: new Date().toLocaleTimeString(), 
+                            time: new Date().toLocaleTimeString('en-US', { timeZone: 'America/Caracas', hour12: false }), 
                             result: 'PROCESANDO VELA... ⏳', 
                             color: 'text-yellow-500 font-black animate-pulse' 
                         };
