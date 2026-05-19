@@ -600,7 +600,18 @@ io.on('connection', (socket) => {
                 if (session.scannedAssets && session.scannedAssets.length > 0) {
                     socket.emit('scan_telemetry', { results: session.scannedAssets });
                 }
-                socket.emit('live_bot_update', { phase: session.botState.phase, trades: session.botState.trades, w: session.botState.w, l: session.botState.l });
+                
+                // Emitir restauración completa de estado al reconectar
+                socket.emit('bot_restored_state', {
+                    phase: session.botState.phase,
+                    account: session.botState.account,
+                    amount: session.botState.amount,
+                    cycles: session.botState.cycles,
+                    w: session.botState.w,
+                    l: session.botState.l,
+                    trades: session.botState.trades,
+                    report: session.botState.report || []
+                });
                 
                 if (!session.isLooping) {
                     const profile = session.profile;
