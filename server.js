@@ -131,6 +131,28 @@ const getAssetLimits = (asset) => {
     if (!assetMemory.has(asset)) assetMemory.set(asset, { rsiCall: 20, rsiPut: 80, cciCall: -150, cciPut: 150, wins: 0, losses: 0 });
     return assetMemory.get(asset);
 };
+
+// --- SISTEMA DE HORARIOS EFECTIVOS ---
+const TIME_MEMORY_FILE = path.join(__dirname, 'time_memory.json');
+const timeMemory = {};
+
+try {
+    if (fs.existsSync(TIME_MEMORY_FILE)) {
+        Object.assign(timeMemory, JSON.parse(fs.readFileSync(TIME_MEMORY_FILE, 'utf8')));
+    }
+} catch(e) {}
+
+const saveTimeMemory = () => {
+    try { fs.writeFileSync(TIME_MEMORY_FILE, JSON.stringify(timeMemory, null, 2)); } catch(e) {}
+};
+
+const recordTradeTime = (isWin) => {
+    const hour = new Date().getHours().toString();
+    if (!timeMemory[hour]) timeMemory[hour] = { wins: 0, losses: 0 };
+    if (isWin) timeMemory[hour].wins++;
+    else timeMemory[hour].losses++;
+    saveTimeMemory();
+};
 const punishAsset = (asset, side) => {
     const limits = getAssetLimits(asset);
     limits.losses = (limits.losses || 0) + 1;
@@ -142,6 +164,7 @@ const punishAsset = (asset, side) => {
         limits.cciPut = Math.min(300, limits.cciPut + 20);
     }
     saveMemory();
+    recordTradeTime(false);
 };
 const rewardAsset = (asset, side) => {
     const limits = getAssetLimits(asset);
@@ -154,6 +177,7 @@ const rewardAsset = (asset, side) => {
         limits.cciPut = Math.max(150, limits.cciPut - 5);
     }
     saveMemory();
+    recordTradeTime(true);
 };
 
 // --- MOTOR BOT (TOP LEVEL) ---
